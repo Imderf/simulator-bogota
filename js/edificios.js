@@ -32,7 +32,7 @@ const azar = (k) => { const s = Math.sin(k * 127.1 + 311.7) * 43758.5453; return
 const LADRILLO = [0x8f4630, 0x9c5236, 0xa45e3f, 0x7f3d2b, 0xb06a48].map((c) => new THREE.Color(c));
 const ESTUCO = [0xd9d0bf, 0xe4dccc, 0xcfc5b2, 0xe8e1d3].map((c) => new THREE.Color(c));
 const CONCRETO = [0x9a9893, 0xa8a49b, 0x8b8a86].map((c) => new THREE.Color(c));
-const VIDRIO_TORRE = [0x6d7d8c, 0x7e8b96, 0x5f6f7e].map((c) => new THREE.Color(c));
+const VIDRIO_TORRE = [0x8a9bab, 0x98a4ae, 0x7f90a0].map((c) => new THREE.Color(c));
 const TEJA = new THREE.Color(0xa0522d), TECHO = new THREE.Color(0x77736c);
 
 // La Candelaria (aprox.): casas bajas blancas con techo de teja.

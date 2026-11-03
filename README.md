@@ -8,9 +8,9 @@ Empezamos por Bogotá. Después vendrán otras ciudades y pueblos de Colombia.
 
 ## Estado
 
-Primera versión de la zona Centro, todavía sin probar a fondo en el navegador.
+Primera versión de la zona Centro, probada en escritorio y en celular (vista emulada) el 2026-11-03.
 
-Para verla en local, sirve la carpeta con cualquier servidor estático (por ejemplo `npx serve .` o `python3 -m http.server`) y abre `index.html`. Necesita un navegador con WebGPU o WebGL 2.
+Para verla en local: `npm run inicio` y abrir http://127.0.0.1:8801. Ese servidor no guarda caché, así que cada cambio se ve al recargar. Necesita un navegador con WebGPU o WebGL 2.
 
 Para regenerar los datos: `npm install` y luego `npm run datos`.
 

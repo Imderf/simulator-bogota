@@ -20,7 +20,42 @@ export async function cargarTerreno(url) {
     return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
   };
 
-  return { cols, filas, paso, ox, oz, base, h, altura, ancho: (cols - 1) * paso, largo: (filas - 1) * paso };
+  // Explanada bajo una planta (la cima de Monserrate, Guadalupe): los puntos de adentro quedan a la altura y,
+  // y los de una franja de `margen` metros alrededor se mezclan con el relieve original. Llamar antes de armar la malla.
+  const aplanar = (anillo, y, margen = paso * 1.5) => {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [x, z] of anillo) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+    const i0 = Math.max(0, Math.floor((x0 - margen - ox) / paso)), i1 = Math.min(cols - 1, Math.ceil((x1 + margen - ox) / paso));
+    const j0 = Math.max(0, Math.floor((z0 - margen - oz) / paso)), j1 = Math.min(filas - 1, Math.ceil((z1 + margen - oz) / paso));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const p = [ox + i * paso, oz + j * paso];
+      const d = dentro(p, anillo) ? 0 : distancia(p, anillo);
+      if (d > margen) continue;
+      const k = j * cols + i, t = 1 - d / margen;
+      h[k] += (y - h[k]) * t * t * (3 - 2 * t);
+    }
+  };
+
+  return { cols, filas, paso, ox, oz, base, h, altura, aplanar, ancho: (cols - 1) * paso, largo: (filas - 1) * paso };
+}
+
+function dentro([x, z], anillo) {
+  let d = false;
+  for (let i = 0, j = anillo.length - 1; i < anillo.length; j = i++) {
+    const [xi, zi] = anillo[i], [xj, zj] = anillo[j];
+    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) d = !d;
+  }
+  return d;
+}
+
+function distancia([x, z], anillo) {
+  let m = Infinity;
+  for (let i = 0, j = anillo.length - 1; i < anillo.length; j = i++) {
+    const [ax, az] = anillo[j], [bx, bz] = anillo[i], dx = bx - ax, dz = bz - az;
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
+    m = Math.min(m, Math.hypot(x - ax - dx * t, z - az - dz * t));
+  }
+  return m;
 }
 
 // Colores del suelo según altura y pendiente: sabana urbana, potreros y cerros de bosque.

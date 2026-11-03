@@ -219,7 +219,8 @@ function vidrioTorre(color) {
   const f = fac();
   const losa = step(fract(f.y.div(3.2)), 0.12);
   const parteluz = step(fract(f.x.div(1.6)), 0.05);
-  const m = new THREE.MeshStandardNodeMaterial({ metalness: 0.6, roughness: 0.15 });
+  // Sin mapa de entorno un vidrio metálico se ve negro: se simula con poco metal y algo de brillo.
+  const m = new THREE.MeshStandardNodeMaterial({ metalness: 0.08, roughness: 0.32 });
   const base = vec3(...new THREE.Color(color).toArray());
   m.colorNode = mix(base, base.mul(0.55), max(losa, parteluz));
   m.emissiveNode = vec3(0.9, 0.85, 0.7).mul(step(0.7, hash(floor(f.x.div(1.6)).add(floor(f.y.div(3.2)).mul(77.0))))).mul(noche).mul(0.8).mul(float(1).sub(losa));
@@ -233,6 +234,12 @@ export function construirLugares(datos, terreno, edificios) {
   const obra = new Obra();
   const suelo = (x, z) => terreno.altura(x, z);
   const minSuelo = (anillo) => Math.min(...anillo.map(([x, z]) => suelo(x, z)));
+  // En los cerros la malla de 32 m redondea las cimas: se hace una explanada a la altura media de la planta.
+  const explanada = (anillo) => {
+    const y = anillo.reduce((s, [x, z]) => s + suelo(x, z), 0) / anillo.length;
+    terreno.aplanar(anillo, y);
+    return y;
+  };
   const M = {
     arenisca: piedra(0xcdb88e),
     areniscaVentanas: piedra(0xcbb68c, { ventanas: [4.2, 6.5, 3] }),
@@ -249,8 +256,8 @@ export function construirLugares(datos, terreno, edificios) {
     adoquin: piedra(0x9c9284, { bloque: [0.9, 0.9] }),
     arena: plano(0xc9a874),
     colpatria: colpatria(192),
-    vidrioAzul: vidrioTorre(0x5a7189),
-    vidrioGris: vidrioTorre(0x6a7480),
+    vidrioAzul: vidrioTorre(0x7f98b0),
+    vidrioGris: vidrioTorre(0x8e98a3),
     cable: new THREE.LineBasicNodeMaterial({ color: 0x222222 }),
     cabina: plano(0xc0392b),
   };
@@ -435,8 +442,9 @@ export function construirLugares(datos, terreno, edificios) {
   // --- Monserrate: basílica blanca con UNA torre central y techos de teja (foto de Commons de 2017;
   // corrige la idea de dos torres). Cima a 3.152 m (es.wiki). Alturas de la torre aprox.
   {
-    const [planta] = plantas.basilicaMonserrate.anillos, y0 = minSuelo(planta);
-    obra.prisma(M.blancoVentanas, planta, y0 - 4, y0 + 10);
+    const [planta] = plantas.basilicaMonserrate.anillos, y0 = explanada(planta);
+    obra.prisma(M.areniscaOscura, planta, y0 - 4, y0 + 0.6); // zócalo
+    obra.prisma(M.blancoVentanas, planta, y0 + 0.6, y0 + 10);
     obra.prisma(M.teja, planta, y0 + 10, y0 + 10.6, [], { techo: true });
     const r = rectangulo(planta), lado = r.ladoHacia([0, 0]); // la fachada mira a la ciudad
     const f = ((lado.eje === 'u' ? r.mu : r.mw) - 6) * lado.signo;
@@ -448,8 +456,9 @@ export function construirLugares(datos, terreno, edificios) {
     obra.torno(M.estucoBlanco, p, [[1.5, y0 + 34], [0.2, y0 + 38], [0, y0 + 38.2]], 8);
     obra.cilindro(M.bronce, p, 0.08, y0 + 38, y0 + 40, 4);
     for (const k of ['estacionTelefericoArriba', 'estacionFunicularArriba', 'estacionAbajo']) {
-      const [pl] = plantas[k].anillos, ys = minSuelo(pl);
-      obra.prisma(M.blancoVentanas, pl, ys - 3, ys + 7);
+      const [pl] = plantas[k].anillos, ys = k === 'estacionAbajo' ? minSuelo(pl) : explanada(pl);
+      obra.prisma(M.areniscaOscura, pl, ys - 3, ys + 0.5);
+      obra.prisma(M.blancoVentanas, pl, ys + 0.5, ys + 7);
       obra.prisma(M.teja, pl, ys + 7, ys + 7.5);
     }
     excluir.push(planta);
@@ -457,8 +466,9 @@ export function construirLugares(datos, terreno, edificios) {
 
   // --- Guadalupe: ermita y la Virgen de 15 m (es.wiki). La figura es una silueta aprox.
   {
-    const [planta] = plantas.guadalupe.anillos, y0 = minSuelo(planta);
-    obra.prisma(M.estucoBlanco, planta, y0 - 3, y0 + 8);
+    const [planta] = plantas.guadalupe.anillos, y0 = explanada(planta);
+    obra.prisma(M.areniscaOscura, planta, y0 - 3, y0 + 0.5);
+    obra.prisma(M.estucoBlanco, planta, y0 + 0.5, y0 + 8);
     const r = rectangulo(planta), p = r.punto(-r.mu - 12, 0), ys = suelo(...p);
     obra.cilindro(M.arenisca, p, 2.5, ys - 2, ys + 4, 8);
     obra.torno(M.estucoBlanco, p, [[0, ys + 4], [1.6, ys + 4], [1.3, ys + 9], [0.9, ys + 14], [0.75, ys + 15.2], [0.9, ys + 16.5], [0.6, ys + 18.4], [0, ys + 19]], 12);
@@ -495,19 +505,20 @@ export function construirLugares(datos, terreno, edificios) {
   return { grupo, animar, excluir: (e) => excluir.some((p) => adentro([e.cx, e.cz], p)), centroPlaza };
 }
 
-// Puntos para el menú de lugares: [nombre, objetivo de la cámara, distancia, altura de la vista].
+// Puntos para el menú de lugares. La cámara se para del lado de `desde` (por defecto, la Plaza de Bolívar),
+// a `dist` metros del objetivo y `alto` metros por encima del suelo.
 export function puntosDeVista(datos, centroPlaza) {
   const centro = (k) => rectangulo(datos[k].anillos[0]);
-  const v = (k, nombre, dist, alto) => { const r = centro(k); return { nombre, x: r.cx, z: r.cz, dist, alto }; };
+  const v = (k, nombre, dist, alto, extra = {}) => { const r = centro(k); return { nombre, x: r.cx, z: r.cz, dist, alto, desde: centroPlaza, ...extra }; };
   return [
     { nombre: 'Plaza de Bolívar', x: centroPlaza[0], z: centroPlaza[1], dist: 260, alto: 120 },
-    v('basilicaMonserrate', 'Monserrate', 420, 160),
-    v('colpatria', 'Torre Colpatria', 520, 260),
-    { nombre: 'BD Bacatá', x: 640, z: -760, dist: 520, alto: 260 },
+    v('basilicaMonserrate', 'Monserrate', 300, 90),
+    v('colpatria', 'Torre Colpatria', 480, 200),
+    { nombre: 'BD Bacatá', x: 640, z: -760, dist: 520, alto: 330, desde: centroPlaza },
     v('torreA', 'Torres del Parque', 380, 160),
     v('santamaria', 'La Santamaría', 260, 140),
-    v('catedral', 'Catedral Primada', 220, 70),
-    v('guadalupe', 'Guadalupe', 380, 140),
+    v('catedral', 'Catedral Primada', 170, 45),
+    v('guadalupe', 'Guadalupe', 170, 60),
     { nombre: 'La Candelaria', x: 450, z: 80, dist: 420, alto: 260 },
   ];
 }

@@ -14,6 +14,9 @@ const DATOS = `./datos/${ZONA.nombre}/`;
 const barra = document.querySelector('#carga-barra'), textoCarga = document.querySelector('#carga-texto');
 let avance = 0;
 const paso = (texto, cuanto) => { avance += cuanto; barra.style.width = `${Math.min(100, avance)}%`; textoCarga.textContent = texto; };
+// Deja que el navegador pinte la barra antes de seguir con el trabajo pesado.
+// Con la pestaña en segundo plano no llegan cuadros: el tope de tiempo evita que la carga se quede esperando.
+const respirar = () => new Promise((listo) => { requestAnimationFrame(() => setTimeout(listo, 0)); setTimeout(listo, 80); });
 
 const renderer = new THREE.WebGPURenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -66,6 +69,12 @@ const [terreno, edificios, arboles, vias, suelo, lugaresDatos] = await Promise.a
 
 const [cx0, cz0] = aMundo(ZONA.caja[0], ZONA.caja[3]), [cx1, cz1] = aMundo(ZONA.caja[2], ZONA.caja[1]);
 const cajaSuelo = { x0: cx0, z0: cz0, x1: cx1, z1: cz1 };
+paso('Armando los lugares', 10);
+await respirar();
+// Los lugares van primero: pueden aplanar el terreno bajo sus plantas antes de armar la malla.
+const lugares = construirLugares(lugaresDatos, terreno, edificios);
+escena.add(lugares.grupo);
+
 const tex = texturaSuelo(suelo, cajaSuelo);
 const matTerreno = new THREE.MeshStandardNodeMaterial({ roughness: 1 });
 const t = texture(tex, uv());
@@ -73,15 +82,15 @@ matTerreno.colorNode = mix(vertexColor(), t.rgb, t.a);
 const tierra = new THREE.Mesh(mallaTerreno(terreno, tex, cajaSuelo), matTerreno);
 tierra.receiveShadow = true;
 escena.add(tierra);
-paso('Armando los lugares', 10);
-
-const lugares = construirLugares(lugaresDatos, terreno, edificios);
-escena.add(lugares.grupo);
+paso('Levantando edificios', 0);
+await respirar();
 escena.add(mallasEdificios(edificios, terreno, lugares.excluir).grupo);
 paso('Plantando árboles', 15);
+await respirar();
 escena.add(mallasArboles(arboles, terreno, lugares.excluir));
 escena.add(mallaVias(vias, terreno));
-paso('Listo', 20);
+paso('Preparando la vista', 10);
+await respirar();
 
 // Menú de lugares: la cámara vuela hasta cada uno.
 const menu = document.querySelector('#lugares');
@@ -89,7 +98,10 @@ let vuelo = null;
 function irA(p, inmediato = false) {
   const y = terreno.altura(p.x, p.z);
   const destinoT = new THREE.Vector3(p.x, y + 20, p.z);
-  const dir = new THREE.Vector3(-0.55, 0, 0.83).normalize(); // mirando hacia los cerros
+  // Por defecto se mira hacia los cerros; si el lugar dice desde dónde verlo, la cámara se para de ese lado.
+  const dir = new THREE.Vector3(-0.55, 0, 0.83);
+  if (p.desde && Math.hypot(p.desde[0] - p.x, p.desde[1] - p.z) > 50) dir.set(p.desde[0] - p.x, 0, p.desde[1] - p.z);
+  dir.normalize();
   const destinoC = destinoT.clone().addScaledVector(dir, p.dist).setY(y + p.alto);
   if (inmediato) { controles.target.copy(destinoT); camara.position.copy(destinoC); return; }
   vuelo = { t: 0, t0: controles.target.clone(), c0: camara.position.clone(), t1: destinoT, c1: destinoC };
@@ -134,6 +146,8 @@ window.addEventListener('resize', () => {
 const reloj = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(0.05, reloj.getDelta());
+  // Con la pestaña o el panel ocultos el lienzo mide 0 y WebGPU no puede crear la imagen.
+  if (!renderer.domElement.clientWidth || !renderer.domElement.clientHeight) return;
   if (vuelo) {
     vuelo.t = Math.min(1, vuelo.t + dt / 2.2);
     const k = vuelo.t * vuelo.t * (3 - 2 * vuelo.t);
@@ -152,4 +166,9 @@ renderer.setAnimationLoop(() => {
   renderer.render(escena, camara);
 });
 
+// La primera vez cada material compila su shader: se hace antes de quitar la pantalla de carga.
+await renderer.compileAsync(escena, camara);
+paso('Listo', 10);
 document.querySelector('#carga').classList.add('oculta');
+// Para depurar desde la consola del navegador.
+window.simulador = { escena, camara, controles, terreno, irA };

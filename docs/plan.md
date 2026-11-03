@@ -6,8 +6,8 @@ Estado al 2026-11-03.
 |---|---|---|
 | 1 | Planificación: datos, licencias, zona inicial, lista de lugares | Hecha |
 | 2 | Terreno y datos: scripts que bajan y compactan | Hecha para la zona Centro |
-| 3 | Zona piloto Centro: motor base | Primera versión, sin probar en navegador |
-| 4 | Lugares emblemáticos hechos a mano | Prioridad 1 armada, sin probar |
+| 3 | Zona piloto Centro: motor base | Funciona; probado en escritorio y celular emulado |
+| 4 | Lugares emblemáticos hechos a mano | Prioridad 1 armada y revisada en pantalla |
 | 5 | Vida en la calle: TransMilenio, SITP, taxis, motos, peatones, lluvia | Pendiente |
 | 6 | Resto de Bogotá por localidades | Pendiente |
 | 7 | Plantilla para otras ciudades y pueblos de Colombia | Pendiente |
@@ -36,9 +36,20 @@ Estado al 2026-11-03.
 
 Plaza de Bolívar (plaza, estatua, Capitolio con pórtico de 18 columnas, Catedral con dos torres de 52 m, Palacio Liévano, Palacio de Justicia), Torre Colpatria (196 m, fachada de LED animada de noche), BD Bacatá (216 y 167 m), Edificio Avianca (161 m), Torres del Parque, La Santamaría, Planetario, Museo Nacional, Teatro Colón, Monserrate (basílica de torre única, estaciones, funicular y teleférico con cabina) y Guadalupe (ermita y Virgen de 15 m). Fuentes en [lugares.md](lugares.md).
 
+### Primera prueba en el navegador (2026-11-03)
+
+Funcionó al primer intento: sin errores de shader y a 120 cuadros por segundo en un Mac. Lo que se corrigió:
+
+- El vidrio de Bacatá y Avianca salía negro: sin mapa de entorno, un material muy metálico no refleja nada. Ahora usa poco metal.
+- Las torres genéricas de 20 o más pisos se veían casi negras a la sombra: paleta más clara.
+- Monserrate y Guadalupe quedaban enterrados o sobre un muro de 60 m: la malla de 32 m redondea las cimas. Ahora se aplana el terreno bajo su planta (`terreno.aplanar`), como la explanada real.
+- La cámara llegaba de lado a la Catedral: cada lugar puede decir desde dónde se mira (`desde`).
+- Con la pestaña oculta el lienzo mide 0 y WebGPU fallaba: ahora no dibuja hasta que el lienzo tenga tamaño.
+- La barra de carga no avanzaba: ahora deja pintar entre pasos y compila los shaders antes de quitar la pantalla.
+
 ## Lo que sigue
 
-1. **Probar en el navegador**, en escritorio y celular. Corregir lo que salga mal: errores de shader, orientación de muros, alturas de los lugares.
+1. **Probar en un celular real**: Android e iPhone, con datos móviles.
 2. **Medir rendimiento** en un celular de gama media. Si no da, recortar por distancia los árboles y edificios lejanos.
 3. **Prueba de peso** en `tests/` que falle si `datos/` pasa de 2 MB.
 4. **Afinar los lugares** con las fotos de Commons: frontón y relojes de la Catedral, arcada del Liévano, ventanas de Colpatria, terrazas reales de Salmona.
