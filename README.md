@@ -8,9 +8,14 @@ Empezamos por Bogotá. Después vendrán otras ciudades y pueblos de Colombia.
 
 ## Estado
 
-En planificación. Todavía no hay código para ejecutar.
+Primera versión de la zona Centro, todavía sin probar a fondo en el navegador.
 
-- [Plan por fases](docs/plan.md)
+Para verla en local, sirve la carpeta con cualquier servidor estático (por ejemplo `npx serve .` o `python3 -m http.server`) y abre `index.html`. Necesita un navegador con WebGPU o WebGL 2.
+
+Para regenerar los datos: `npm install` y luego `npm run datos`.
+
+- [Plan por fases y estado](docs/plan.md)
+- [Peso: por qué carga rápido](docs/peso.md)
 - [Fuentes de datos](docs/fuentes-de-datos.md)
 - [Lugares emblemáticos](docs/lugares.md)
 - [Cómo trabajamos en el repo](docs/colaboracion.md)

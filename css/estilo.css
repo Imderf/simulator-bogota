@@ -1,0 +1,65 @@
+:root {
+  --fondo: rgba(14, 17, 22, 0.72);
+  --borde: rgba(255, 255, 255, 0.12);
+  --texto: #f2f0ea;
+  --suave: rgba(242, 240, 234, 0.66);
+  --acento: #f2c14e;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1320; color: var(--texto); }
+#escena, #escena canvas { position: fixed; inset: 0; display: block; touch-action: none; }
+
+#titulo {
+  position: fixed; top: max(16px, env(safe-area-inset-top)); left: 16px;
+  padding: 10px 14px; background: var(--fondo); border: 1px solid var(--borde); border-radius: 10px;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); pointer-events: none;
+}
+#titulo h1 { margin: 0; font-size: 17px; letter-spacing: 0.01em; }
+#titulo p { margin: 2px 0 0; font-size: 12px; color: var(--suave); }
+
+#lugares {
+  position: fixed; top: max(16px, env(safe-area-inset-top)); right: 16px;
+  display: flex; flex-direction: column; gap: 6px; max-height: calc(100% - 120px); overflow-y: auto;
+}
+#lugares button {
+  font: inherit; font-size: 13px; text-align: left; color: var(--texto); cursor: pointer;
+  padding: 8px 12px; background: var(--fondo); border: 1px solid var(--borde); border-radius: 8px;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  transition: border-color 0.2s, background 0.2s;
+}
+#lugares button:hover { border-color: rgba(255, 255, 255, 0.35); }
+#lugares button.activo { border-color: var(--acento); }
+#lugares button:focus-visible, #hora:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+
+#reloj {
+  position: fixed; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px; width: min(420px, calc(100% - 32px));
+  background: var(--fondo); border: 1px solid var(--borde); border-radius: 10px;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); font-size: 13px;
+}
+#reloj input { flex: 1; accent-color: var(--acento); }
+#reloj output { font-variant-numeric: tabular-nums; min-width: 3.2em; text-align: right; }
+
+#carga {
+  position: fixed; inset: 0; display: grid; place-items: center; background: #0d1320;
+  transition: opacity 0.6s ease; z-index: 10;
+}
+#carga.oculta { opacity: 0; pointer-events: none; }
+#carga p { margin: 0 0 10px; font-size: 14px; color: var(--suave); text-align: center; }
+#carga-pista { width: 240px; height: 3px; background: rgba(255, 255, 255, 0.1); border-radius: 2px; overflow: hidden; }
+#carga-barra { width: 0; height: 100%; background: var(--acento); transition: width 0.3s ease; }
+
+@media (max-width: 640px) {
+  #titulo p { display: none; }
+  #lugares {
+    top: auto; right: 0; left: 0; bottom: calc(max(16px, env(safe-area-inset-bottom)) + 52px);
+    flex-direction: row; overflow-x: auto; padding: 0 16px; max-height: none; scrollbar-width: none;
+  }
+  #lugares button { flex: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #carga, #carga-barra, #lugares button { transition: none; }
+}

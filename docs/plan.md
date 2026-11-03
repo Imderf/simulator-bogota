@@ -1,22 +1,62 @@
 # Plan por fases
 
-1. **Planificación.** Datos, licencias, zona inicial y lista de lugares.
-2. **Terreno y datos.** Scripts en `tools/` que bajan catastro, árboles, relieve y vías, y generan los archivos que lee la simulación. Los datos crudos no se suben al repo.
-3. **Zona piloto: Centro.** La Candelaria, Plaza de Bolívar, Centro Internacional y Monserrate. Tiene los edificios más altos, los lugares más conocidos y los cerros.
-4. **Lugares emblemáticos hechos a mano**, uno por uno. Ver [lugares.md](lugares.md).
-5. **Vida en la calle.** TransMilenio, SITP, taxis amarillos, motos, ciclorrutas, peatones y lluvia.
-6. **Resto de Bogotá** por localidades, cuidando el rendimiento.
-7. **Plantilla para otras ciudades.** Separar lo que es propio de Bogotá de lo que sirve para cualquier ciudad o pueblo de Colombia.
+Estado al 2026-11-03.
+
+| Fase | Qué | Estado |
+|---|---|---|
+| 1 | Planificación: datos, licencias, zona inicial, lista de lugares | Hecha |
+| 2 | Terreno y datos: scripts que bajan y compactan | Hecha para la zona Centro |
+| 3 | Zona piloto Centro: motor base | Primera versión, sin probar en navegador |
+| 4 | Lugares emblemáticos hechos a mano | Prioridad 1 armada, sin probar |
+| 5 | Vida en la calle: TransMilenio, SITP, taxis, motos, peatones, lluvia | Pendiente |
+| 6 | Resto de Bogotá por localidades | Pendiente |
+| 7 | Plantilla para otras ciudades y pueblos de Colombia | Pendiente |
+
+## Lo que ya está
+
+### Datos (fase 2)
+
+- `tools/bajar-centro.mjs` baja catastro, árboles, OpenStreetMap y Copernicus a `tools/data/raw/` (fuera de git).
+- `tools/construir-centro.mjs` los convierte en binarios compactos en `datos/centro/`.
+- `tools/lugares-centro.mjs` saca de OpenStreetMap las plantas de los lugares emblemáticos.
+- **Toda la zona Centro pesa 944 KB**: relieve de 484 × 520 puntos cada 32 m (173 KB), 51.262 edificios (522 KB), 70.697 árboles (134 KB), 6.183 vías (89 KB), suelo (26 KB) y lugares (9 KB). Ver [peso.md](peso.md).
+- Marco de coordenadas compartido en `js/marco.js`: metros, origen en la Plaza de Bolívar, base a 2.606 m.
+
+### Motor (fase 3)
+
+- `index.html` sin paso de compilación; three.js r187 desde jsDelivr con WebGPU y TSL.
+- Terreno con colores por altura y pendiente, más parques, bosques, agua y plazas pintados en un `canvas`.
+- Edificios del catastro extruidos sobre el relieve, con ventanas por shader que se encienden de noche. Colores bogotanos: ladrillo, estuco, concreto; casas blancas con teja en La Candelaria.
+- Árboles del Jardín Botánico como instancias, con cinco formas según la especie.
+- Vías de OpenStreetMap como cintas sobre el terreno.
+- Cielo, sol calculado para la latitud de Bogotá y la hora real, y control de hora.
+- Cámara orbital con menú de lugares que vuela hasta cada uno.
+
+### Lugares (fase 4)
+
+Plaza de Bolívar (plaza, estatua, Capitolio con pórtico de 18 columnas, Catedral con dos torres de 52 m, Palacio Liévano, Palacio de Justicia), Torre Colpatria (196 m, fachada de LED animada de noche), BD Bacatá (216 y 167 m), Edificio Avianca (161 m), Torres del Parque, La Santamaría, Planetario, Museo Nacional, Teatro Colón, Monserrate (basílica de torre única, estaciones, funicular y teleférico con cabina) y Guadalupe (ermita y Virgen de 15 m). Fuentes en [lugares.md](lugares.md).
+
+## Lo que sigue
+
+1. **Probar en el navegador**, en escritorio y celular. Corregir lo que salga mal: errores de shader, orientación de muros, alturas de los lugares.
+2. **Medir rendimiento** en un celular de gama media. Si no da, recortar por distancia los árboles y edificios lejanos.
+3. **Prueba de peso** en `tests/` que falle si `datos/` pasa de 2 MB.
+4. **Afinar los lugares** con las fotos de Commons: frontón y relojes de la Catedral, arcada del Liévano, ventanas de Colpatria, terrazas reales de Salmona.
+5. **Bosque de los cerros**: árboles generados sobre los Cerros Orientales, que no están en el censo urbano.
+6. **Recorrer a pie y en carro**, con colisiones contra los edificios.
+7. **Fase 5**: TransMilenio por la Caracas y la 7, taxis amarillos y motos.
+8. **Publicar en GitHub Pages** cuando Imderf y Jaime lo aprueben.
 
 ## Lo que hace distinta a Bogotá
 
-- **Relieve.** Nueva York es plana. Bogotá está a unos 2.600 m, con los Cerros Orientales al lado. Calles, edificios, árboles y física tienen que apoyarse en un terreno real.
-- **Cuadrícula de calles y carreras**, paralela a los cerros. La nomenclatura (Calle 26, Carrera 7) sirve para el mapa y el radar.
+- **Relieve.** Nueva York es plana. Bogotá está a unos 2.600 m, con los Cerros Orientales al lado. Calles, edificios, árboles y física se apoyan en un terreno real.
+- **La cuadrícula del centro está girada unos 31°** hacia el nor-noreste. Cada lugar se modela en su propio marco, alineado con su planta.
 - **Luz del ecuador.** Amanece y anochece cerca de las 6 todo el año.
 - **Transporte propio.** Buses articulados en carriles exclusivos, estaciones en el separador, muchas motos y ciclovía los domingos.
 
-## Decisiones técnicas abiertas
+## Decisiones tomadas
 
-- Origen del sistema de coordenadas: propuesta, la Plaza de Bolívar.
-- Cómo restar la altura base (unos 2.600 m) para no perder precisión.
-- Cuántos edificios aguanta un celular: el catastro tiene 2,4 millones de construcciones.
+- Origen en la Plaza de Bolívar; la altura base (2.606 m) se resta para no perder precisión.
+- Relieve de Copernicus GLO-30 suavizado: en la sabana se toma el mínimo local para quitar techos.
+- Edificios de menos de 6 m² se descartan (casetas y errores del catastro).
+- Altura de cada edificio = pisos × 3 m.

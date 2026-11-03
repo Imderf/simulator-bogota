@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Simulador Bogotá</title>
+  <meta name="description" content="Bogotá en el navegador: relieve real, edificios del catastro y sus lugares emblemáticos." />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.webgpu.js",
+        "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.webgpu.js",
+        "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.tsl.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="modulepreload" href="./js/binario.js" />
+  <link rel="modulepreload" href="./js/marco.js" />
+  <link rel="modulepreload" href="./js/terreno.js" />
+  <link rel="modulepreload" href="./js/edificios.js" />
+  <link rel="modulepreload" href="./js/arboles.js" />
+  <link rel="modulepreload" href="./js/vias.js" />
+  <link rel="modulepreload" href="./js/lugares.js" />
+  <link rel="modulepreload" href="./js/sol.js" />
+  <script type="module" src="./js/main.js"></script>
+  <link rel="stylesheet" href="./css/estilo.css" />
+</head>
+<body>
+  <div id="escena"></div>
+
+  <header id="titulo">
+    <h1>Simulador Bogotá</h1>
+    <p>Zona Centro · datos abiertos de Bogotá y OpenStreetMap</p>
+  </header>
+
+  <nav id="lugares" aria-label="Lugares"></nav>
+
+  <div id="reloj">
+    <label for="hora">Hora</label>
+    <input id="hora" type="range" min="0" max="23.75" step="0.25" value="15" />
+    <output id="hora-texto">15:00</output>
+  </div>
+
+  <div id="carga">
+    <div>
+      <p id="carga-texto">Cargando</p>
+      <div id="carga-pista"><div id="carga-barra"></div></div>
+    </div>
+  </div>
+
+  <noscript>Necesitas JavaScript para ver el simulador.</noscript>
+</body>
+</html>

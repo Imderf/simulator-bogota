@@ -1,0 +1,12 @@
+{
+  "name": "simulador-bogota",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "datos": "node tools/bajar-centro.mjs && node tools/construir-centro.mjs && node tools/lugares-centro.mjs",
+    "test": "node --test tests/"
+  },
+  "devDependencies": {
+    "geotiff": "^2.1.3"
+  }
+}
