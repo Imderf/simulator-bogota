@@ -1,0 +1,5 @@
+.DS_Store
+node_modules/
+# Descargas crudas: pesan mucho y se regeneran con los scripts de tools/
+tools/data/raw/
+*.tmp
