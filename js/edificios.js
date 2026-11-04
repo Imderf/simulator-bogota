@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, If, property, attribute, varying, fract, step, floor, hash, mix, vec2, vec3, vec4, float, uniform, fwidth, smoothstep, max, min,
   clamp, abs, mod, pow, dot, cos, normalView, positionViewDirection, mx_noise_float,
+  normalWorld, positionWorld, positionView, cameraPosition, normalize, sign,
 } from 'three/tsl';
 import { cargarBinario } from './binario.js';
 
@@ -37,14 +38,18 @@ const ESTUCO = [0xd9d0bf, 0xe4dccc, 0xcfc5b2, 0xe8e1d3].map((c) => new THREE.Col
 const CONCRETO = [0x9a9893, 0xa8a49b, 0x8b8a86].map((c) => new THREE.Color(c));
 const VIDRIO_TORRE = [0x8a9bab, 0x98a4ae, 0x7f90a0].map((c) => new THREE.Color(c));
 const TEJA = new THREE.Color(0xa0522d), TECHO = new THREE.Color(0x77736c);
+// Casas de La Candelaria pintadas a color: azul, ocre, rojo colonial, verde, amarillo y el blanco de siempre.
+const COLONIAL = [0x4f79ad, 0xc79a45, 0xa4402f, 0x5d8a5c, 0xe2bf4a, 0xe9e3d3, 0xe9e3d3, 0xd9733f].map((c) => new THREE.Color(c));
 
 // La Candelaria (aprox.): casas bajas blancas con techo de teja.
 const enCandelaria = (x, z) => x > -150 && x < 1050 && z > -650 && z < 650;
+// Casa colonial (familia 4): la usan el shader y los balcones y aleros 3D de detalles-edificios.js.
+export const esColonial = (e) => e.pisos <= 3 && enCandelaria(e.cx, e.cz);
 
 // Familias de fachada, que el shader dibuja distinto: 0 ladrillo, 1 estuco, 2 concreto, 3 vidrio de torre, 4 casa colonial.
 function colores(e, k) {
   const r = azar(k);
-  if (e.pisos <= 3 && enCandelaria(e.cx, e.cz)) return [ESTUCO[Math.floor(r * ESTUCO.length)], TEJA, 4];
+  if (esColonial(e)) return [COLONIAL[Math.floor(azar(k + 19) * COLONIAL.length)], TEJA, 4];
   if (e.pisos >= 20) return r < 0.5 ? [VIDRIO_TORRE[Math.floor(r * 6)], TECHO, 3] : [CONCRETO[Math.floor(r * 6) % 3], TECHO, 2];
   const fam = r < 0.55 ? 0 : r < 0.8 ? 1 : 2, lista = [LADRILLO, ESTUCO, CONCRETO][fam];
   return [lista[Math.floor(azar(k + 7) * lista.length)], r < 0.55 && e.pisos <= 2 ? TEJA : TECHO, fam];
@@ -91,7 +96,7 @@ function agregar(c, e, k, terreno) {
   // El primer piso arranca a nivel del andén en el punto más alto de la planta (las vías y andenes van ~0,45 m sobre
   // el terreno): así una casa de un piso nunca queda enterrada a la altura de un carro del lado de arriba de la
   // loma; del lado de abajo queda un zócalo alto, como en las calles empinadas de La Candelaria.
-  const base = max + 0.45;
+  const base = max + 0.45; // (detalles-edificios.js usa la misma regla)
   const abajo = min - 3;
   const arriba = base + e.pisos * ALTURA_PISO + 0.6;
   const [muro, techo, familia] = colores(e, k);
@@ -156,14 +161,14 @@ function materialFachada() {
   const tinte = varying(vec3(floor(e.x.div(65536)), mod(floor(e.x.div(256)), 256), mod(e.x, 256)).div(255));
   const rasgos = varying(vec4(mod(e.y, 8), mod(floor(e.y.div(8)), 2), mod(floor(e.y.div(16)), 128), floor(e.y.div(2048))));
   // three arma primero el color y después lee rugosidad, emisión y oclusión: la función del color las deja listas.
-  const rugosidad = property('float'), emision = property('vec3'), oclusion = property('float');
+  const rugosidad = property('float'), emision = property('vec3'), oclusion = property('float'), relieve = property('float');
 
   const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.85, metalness: 0.0 });
   m.colorNode = Fn(() => {
     const s = f.x, y = f.y, largo = f.z, uno = float(1);
     // Las derivadas van antes de cualquier If: WGSL no deja calcularlas dentro de una rama.
     const mx = fwidth(s).toVar(), my = fwidth(y).toVar(); // metros por píxel a lo largo y a lo alto
-    const c = vec3(tinte).toVar(), rug = float(0.9).toVar(), emi = vec3(0).toVar(), ao = float(1).toVar();
+    const c = vec3(tinte).toVar(), rug = float(0.9).toVar(), emi = vec3(0).toVar(), ao = float(1).toVar(), alt = float(0).toVar();
 
     If(largo.greaterThan(0), () => { // los techos llevan largo -1 y se quedan con su color
       const fam = floor(rasgos.x.add(0.5)), esComercial = step(0.5, rasgos.y), pisos = floor(rasgos.z.add(0.5));
@@ -266,6 +271,7 @@ function materialFachada() {
           const tono = hash(floor(pieza).add(hilada.add(100).mul(1301)).add(semilla.mul(17))).sub(0.5)
             .mul(uno.sub(smoothstep(0.5, 1, max(wl.x, wl.y)))); // cada ladrillo con su tono, solo de cerca
           colorLadrillo.assign(mix(tinte.mul(tono.mul(0.28).add(1)), vec3(0.47, 0.45, 0.42), pega.mul(0.85)));
+          alt.assign(pega.mul(-0.012).add(tono.mul(0.004)));
         });
         // Estuco y concreto con manchas, chorreones bajo las ventanas y humedad que sube del andén.
         const manchas = uno.sub(smoothstep(0, 1.4, h)).mul(0.18).toVar();
@@ -286,7 +292,35 @@ function materialFachada() {
         // De día algunas ventanas muestran cortina.
         const cortina = mix(step(0.62, hash(celda.add(5))), float(0.38), lejos);
         const adentro = mix(vec3(0.05, 0.06, 0.07), vec3(0.3, 0.26, 0.21), cortina.mul(0.6));
-        const colorVidrio = mix(adentro, reflejo, brilloVidrio).mul(hondura).toVar();
+        // Cuarto detrás del vidrio (interior mapping): un rayo contra una caja de ancho del vano, un piso de alto y 4,2 m
+        // de fondo, en metros del mundo; cada cuarto con sus paredes, piso y bombillo. Solo donde hay vidrio.
+        // Adaptado de Slop New York (mrdoob, MIT): js/tsl-materials.js (evaluateApartmentInterior), simplificado.
+        const cuarto = vec3(0).toVar(), prendido = float(0).toVar();
+        If(vidrio.greaterThan(0.01), () => {
+          const nM = normalize(vec3(normalWorld.x, 0, normalWorld.z)), tg = vec3(nM.z.negate(), 0, nM.x);
+          const rayo = normalize(positionWorld.sub(cameraPosition));
+          const dX = dot(rayo, tg), dY = rayo.y, dZ = max(abs(dot(rayo, nM)), 0.05);
+          const oX = cu.sub(0.5).mul(ancho), oY = cv.sub(0.5).mul(ALTURA_PISO), mw = ancho.mul(0.5), mh = ALTURA_PISO * 0.5, prof = 4.2;
+          const tX = mw.sub(oX.mul(sign(dX))).div(max(abs(dX), 0.0001)), tY = float(mh).sub(oY.mul(sign(dY))).div(max(abs(dY), 0.0001)), tZ = float(prof).div(dZ);
+          const tt = min(min(tX, tY), tZ);
+          const fondo = step(tZ, tX).mul(step(tZ, tY)), plano = step(tY, tX).mul(step(tY, tZ)).mul(uno.sub(fondo));
+          const techoC = plano.mul(step(0, dY)), pisoC = plano.mul(uno.sub(step(0, dY)));
+          const hX = oX.add(dX.mul(tt)), hY = oY.add(dY.mul(tt));
+          const idCuarto = celda.add(semilla.mul(31));
+          const pared = matiz(hash(idCuarto.add(2)), 0.12, 0.62).toVar();
+          // Cuadro o ventana en la pared del fondo y una mancha de mueble en el piso.
+          const cuadro = tramo(hX, -0.7, 0.7, 0.05).mul(tramo(hY, -0.2, 0.55, 0.05)).mul(fondo).mul(step(0.45, hash(idCuarto.add(8))));
+          const mueble = tramo(hX, -0.9, 0.3, 0.05).mul(tramo(tt.mul(dZ), 1.5, 3.4, 0.05)).mul(pisoC);
+          const sup = mix(mix(pared, pared.mul(0.82), uno.sub(fondo).sub(plano)), mix(vec3(0.36, 0.25, 0.17), vec3(0.95, 0.94, 0.9), techoC), plano);
+          const sup2 = mix(mix(sup, matiz(hash(idCuarto.add(3)), 0.5, 0.45), cuadro.mul(0.9)), vec3(0.2, 0.14, 0.1), mueble.mul(0.8)).toVar();
+          const bombillo = step(0.58, hash(celda.add(semilla.mul(997)))).mul(noche);
+          const luzCuarto = mix(vec3(1.0, 0.8, 0.52), vec3(0.85, 0.92, 1.0), step(0.8, hash(idCuarto.add(17))));
+          const fondoOscuro = mix(float(1), float(0.55), smoothstep(0, prof, tt.mul(dZ)));
+          // De día entra la luz del cielo; de noche solo alumbra el bombillo del cuarto.
+          cuarto.assign(sup2.mul(fondoOscuro).mul(mix(mix(float(0.3), float(0.04), noche), luzCuarto.x.mul(0.9), bombillo)).mul(mix(vec3(1), luzCuarto, bombillo)));
+          prendido.assign(bombillo);
+        });
+        const colorVidrio = mix(mix(adentro, cuarto, step(0.01, vidrio).mul(uno.sub(cortina.mul(0.7)))), reflejo, brilloVidrio).mul(hondura).toVar();
 
         let cerca1 = muro;
         cerca1 = mix(cerca1, moldura, max(placa, remate));
@@ -296,7 +330,9 @@ function materialFachada() {
         cerca1 = mix(cerca1, vec3(0.6, 0.58, 0.54).mul(0.95), dintel);
         cerca1 = mix(cerca1, colorMarco.mul(hondura), marco);
         cerca1 = mix(cerca1, colorVidrio, vidrio);
-        const cN = cerca1.toVar(), brillo = vidrio.toVar(), emiN = luzVentana.mul(vidrio).toVar();
+        const cN = cerca1.toVar(), brillo = vidrio.toVar(), emiN = mix(luzVentana, cuarto.mul(2.4), prendido).mul(vidrio).mul(uno.sub(cortina.mul(0.5))).toVar();
+        // Relieve para la luz: pega hundida del ladrillo, ventana metida en el muro y repisa/dintel salidos.
+        alt.assign(vidrio.mul(-0.06).add(marco.mul(0.02)).add(alfeizar.mul(0.03)).add(dintel.mul(0.02)).add(placa.mul(0.015)).add(cornisa.mul(0.04)));
 
         // Primer piso, solo donde lo hay.
         If(bajo.greaterThan(0.001), () => {
@@ -318,7 +354,7 @@ function materialFachada() {
           const luzLocal = mix(vec3(1.0, 0.8, 0.55), vec3(0.85, 0.92, 1.0), step(0.6, hash(local.add(13)))).mul(1.8);
           // Vivienda: zócalo pintado en las casas coloniales, ventanas con reja y una puerta por muro.
           const casa = uno.sub(esComercial).mul(bajo);
-          const colorZocalo = mix(gris, matiz(hash(semilla.add(41)), 0.18, 0.32), colonial);
+          const colorZocalo = mix(gris, tinte.mul(0.55).add(vec3(0.03)), colonial);
           const vanoPuerta = floor(hash(semilla.add(largo.mul(7))).mul(vanos));
           const conPuerta = uno.sub(step(0.5, abs(columna.sub(vanoPuerta)))).mul(step(3.5, largo)).toVar();
           const puerta = conPuerta.mul(tramo(cu.mul(ancho), ancho.sub(1.1).mul(0.5), ancho.add(1.1).mul(0.5), mx2)).mul(tramo(h, -1, 2.3, my2)).mul(enMuro).mul(casa);
@@ -354,7 +390,17 @@ function materialFachada() {
     rugosidad.assign(rug);
     emision.assign(emi.mul(noche));
     oclusion.assign(ao);
+    relieve.assign(alt);
     return c;
+  })();
+  // Mikkelsen: la normal se inclina con la pendiente del relieve en pantalla (derivadas de hardware), fuera de los If.
+  // Adaptado de Slop New York (mrdoob, MIT): js/tsl-materials.js (bumpNormal).
+  m.normalNode = Fn(() => {
+    const h = float(relieve).toVar();
+    const dpdx = positionView.dFdx(), dpdy = positionView.dFdy();
+    const r1 = dpdy.cross(normalView), r2 = normalView.cross(dpdx), det = dpdx.dot(r1);
+    const grad = det.sign().mul(h.dFdx().mul(r1).add(h.dFdy().mul(r2)));
+    return det.abs().mul(normalView).sub(grad).normalize();
   })();
   m.roughnessNode = rugosidad;
   m.emissiveNode = emision;

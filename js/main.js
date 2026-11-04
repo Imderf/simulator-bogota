@@ -25,6 +25,7 @@ import { crearCalles } from './calles.js';
 import { crearMinimapa } from './minimapa.js';
 import { crearSonido } from './sonido.js';
 import { crearTransMilenio } from './transmilenio.js';
+import { crearDetallesEdificios } from './detalles-edificios.js';
 import { crearMobiliario } from './mobiliario.js';
 import { crearPeatones } from './peatones.js';
 import { crearSemaforos } from './semaforos.js';
@@ -147,7 +148,9 @@ escena.add(crearAgua({ suelo, terreno, vias, nombresVias }).grupo);
 paso('Levantando edificios', 0);
 await respirar();
 const grupoEdificios = mallasEdificios(edificios, terreno, lugares.excluir).grupo;
-escena.add(grupoEdificios);
+// Balcones de madera y aleros de teja de las casas coloniales de La Candelaria, en instancias.
+const detallesEdificios = crearDetallesEdificios({ edificios, terreno, excluir: lugares.excluir });
+escena.add(grupoEdificios, detallesEdificios.grupo);
 // Techo más alto bajo (x, z): un rayo hacia abajo contra edificios y lugares. Así el helicóptero nunca aparece
 // dentro de una torre como la Colpatria.
 const rayoTecho = new THREE.Raycaster(), abajo = new THREE.Vector3(0, -1, 0), origenRayo = new THREE.Vector3();
