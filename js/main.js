@@ -200,7 +200,7 @@ for (const p of vistas) {
   b.append(texto);
   b.addEventListener('click', () => {
     if (recorrido.modo === 'libre') irA(p);
-    else { viajar(() => recorrido.teletransportar(p.x, p.z, recorrido.modo === 'volar' ? vueloHacia(p) : undefined)); minimapa?.destino(null); }
+    else { viajar(() => recorrido.teletransportar(p.llegada?.[0] ?? p.x, p.llegada?.[1] ?? p.z, recorrido.modo === 'volar' ? vueloHacia(p) : undefined)); minimapa?.destino(null); }
     menu.querySelectorAll('button').forEach((x) => x.classList.toggle('activo', x === b));
     tour.hidePopover();
     document.activeElement?.blur();
