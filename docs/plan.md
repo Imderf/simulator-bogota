@@ -141,6 +141,11 @@ En la Avenida Carrera 5 Este / Avenida Carrera 5A Este, junto a la estación de 
 
 También: al elegir **Monserrate en el tour** caminando, el jugador aparece al pie del cerro (andén más cercano) sin ver la basílica. Que aparezca arriba, en la explanada junto a la basílica (lugares.js: basilicaMonserrate), mirando hacia ella, con la cámara que la muestre; en Manejar, en la vía de acceso más cercana con vista al cerro.
 
+### Comparación con Slop New York (2026-11-04)
+
+- Golden hour: corregida la oscuridad (relleno de luz con sol bajo).
+- Rendimiento: 21-34 fps frente a 60-80 de la referencia en el mismo Chrome. Costos por grupo (Plaza de Bolívar): carros estacionados +6 fps al ocultarlos, detalle de edificios +4, edificios +3, vías +3; sombras de carros/tráfico/gente/mobiliario +4. Siguiente: medir con resolución menor, simplificar de lejos los shaders de terreno y asfalto, limitar los estacionados con pintura completa y probar SSR a un cuarto de resolución.
+
 ## Lo que sigue
 
 1. **Probar en un celular real**: Android e iPhone, con datos móviles.
