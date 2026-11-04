@@ -158,7 +158,8 @@ function irA(p, inmediato = false) {
   if (inmediato) { controles.target.copy(destinoT); camara.position.copy(destinoC); return; }
   vuelo = { t: 0, t0: controles.target.clone(), c0: camara.position.clone(), t1: destinoT, c1: destinoC };
 }
-for (const p of puntosDeVista(lugaresDatos, lugares.centroPlaza)) {
+const vistas = puntosDeVista(lugaresDatos, lugares.centroPlaza);
+for (const p of vistas) {
   const li = document.createElement('li'), b = document.createElement('button'), texto = document.createElement('span');
   texto.textContent = p.nombre;
   if (p.nota) { const s = document.createElement('small'); s.textContent = p.nota; texto.append(s); }
@@ -206,7 +207,16 @@ const recorrido = crearRecorrido({
   inicio: { x: px, z: pz, rumbo: Math.atan2(-(ccx - px), -(ccz - pz)) }, // mirando hacia la Catedral
 });
 // Minimapa tipo GPS abajo a la izquierda, con las placas de las dos calles más cercanas.
-minimapa = await crearMinimapa({ contenedor: document.querySelector('#mapa'), vias, edificios, suelo, datos: DATOS });
+// Con clic o M se abre el Atlas de Bogotá: buscador, zoom y clic para aparecer en ese punto.
+minimapa = await crearMinimapa({
+  contenedor: document.querySelector('#mapa'), vias, edificios, suelo, datos: DATOS,
+  lugares: vistas.map(({ nombre, nota, x, z }) => ({ nombre, nota, x, z })),
+  alIr: (x, z) => {
+    if (recorrido.modo === 'libre') irA({ x, z, dist: 260, alto: 120 });
+    else { recorrido.teletransportar(x, z); minimapa.destino(null); }
+  },
+});
+document.querySelector('#boton-mapa').addEventListener('click', () => minimapa.abrir());
 const dirCam = new THREE.Vector3();
 const botonesModo = [...document.querySelectorAll('#modos button')];
 const botonTaxi = document.querySelector('#taxi'), indicador = document.querySelector('#modos .indicador');
@@ -383,6 +393,7 @@ function tablero(dt) {
   elAltitud.textContent = m === 'volar' || m === 'libre' ? `Altura ${Math.round(alto)} m · ${Math.round(2606 + terreno.altura(x, z) + alto)} m s. n. m.` : '';
 }
 
+let ultimaMira = null;
 const reloj = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(0.05, reloj.getDelta());
@@ -397,7 +408,8 @@ renderer.setAnimationLoop(() => {
     camara.position.y += Math.sin(Math.PI * k) * vuelo.c0.distanceTo(vuelo.c1) * 0.15;
     if (vuelo.t >= 1) vuelo = null;
   }
-  const mira = recorrido.actualizar(dt);
+  // Con el atlas abierto el jugador no se mueve (la tecla que se tenía apretada no cuenta).
+  const mira = minimapa.abierto && recorrido.modo !== 'libre' ? ultimaMira : (ultimaMira = recorrido.actualizar(dt));
   if (!mira) {
     controles.update();
     const piso = terreno.altura(camara.position.x, camara.position.z) + 8;
