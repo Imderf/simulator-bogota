@@ -111,7 +111,25 @@ Publicadas una a una en `zona-centro` (ver los commits para el detalle):
 - **Viajes**: vuelo de cámara al cambiar de lugar en todos los modos; el helicóptero aparece a un costado y por encima de los techos (rayo hacia abajo).
 - **Piso**: `calles.piso` mide en el eje de la vía y suma losas de lugares y estaciones.
 
-En curso: fachadas al nivel de la referencia (vidrio con cuartos, rejas, avisos, balcones), vendedores ambulantes y mobiliario urbano, semáforos y física entre peatones y tráfico.
+### Rama `en-curso` (2026-11-04): física, fachadas, mobiliario y Monserrate — por revisar a la vista
+
+Todo esto está en `en-curso` y **no se ha visto con GPU real**. En el contenedor se probó la lógica en node (`node tools/probar-fisica.mjs`, necesita `npm i --no-save three@0.187.0`) y los shaders y mallas nuevos en un navegador sin GPU (WebGL por software, no WebGPU: allí `readPixels` de WebGPU falla). Antes de publicar en `zona-centro`, abrirla en un navegador con WebGPU y mirar lo que sigue.
+
+- **Semáforos, frenado y cruces** (`js/semaforos.js`, `js/trafico.js`, `js/peatones.js`): `node --check` limpio en todo `js/`. Prueba con las vías reales (855 cruces con semáforo, tráfico denso a las 8 h, 240 s simulados en cuatro sitios): las fases nunca dan verde cruzado ni verde al peatón con verde de los carros, ningún carro cruza la línea de pare en rojo, no hay NaN y hay a lo sumo un par de carros rozándose (penetración de 0,1 a 0,8 m, de un solo par por sitio). Sin cambios en esa lógica.
+- **Monserrate y Circunvalar** (`js/vias.js`, `js/trafico.js`):
+  - Las cintas de calzada, andén y senderos usaban la normal de cada tramo; en las curvas se abrían por fuera y se cruzaban por dentro. Ahora usan inglete por vértice (`ingletes`), recortado para que el borde de adentro no pase de la mitad del tramo más corto.
+  - Las dos calzadas de un sentido de la Circunvalar dibujadas a menos de su ancho se pisaban (asfalto, andén y carriles). `separarCalzadas` les pone un `limite` de ancho igual a la distancia entre ejes y quita el andén del lado del separador; `anchoVia` y `andenVia` lo respetan, así que tráfico, semáforos y calles quedan de acuerdo.
+  - En `armarRed` el carril desplazado usa el mismo recorte del inglete: el carril de adentro ya no hace lazo en una curva cerrada.
+  - **Falta** (lo del diagnóstico del 2026-11-04): el bloqueo en el cruce de las aristas 8 y 307 (turnos/reserva) no se reprodujo en la simulación de node después del ajuste de calzadas, pero hay que confirmarlo en vivo; el parche que retira carros parados y solapados sigue ahí. El terreno de 32 m puede asomar por encima de la calzada del lado alto de la loma (hace falta un talud o aplanar el relieve junto a la vía). Y que el tour a Monserrate deje al jugador arriba, junto a la basílica.
+- **Fachadas** (`js/edificios.js`, `js/detalles-edificios.js`): se mantienen el camino barato de lejos, el filtrado al tamaño del píxel y `fwidth` fuera de los `If`.
+  - Vidrio con cuartos detrás (interior mapping): caja del ancho del vano y 4,2 m de fondo, con paredes, piso, techo, cuadro, mueble y bombillo por cuarto; de noche el bombillo alumbra el cuarto.
+  - Relieve (`bumpNormal` de Mikkelsen, adaptado de Slop New York): pega hundida del ladrillo tolete, ventana metida en el muro, repisa, dintel, placas y cornisa.
+  - La Candelaria a color (azul, ocre, rojo colonial, verde, amarillo, blanco, naranja) con zócalo oscuro del mismo tono, puertas y marcos de madera, y en 3D (`detalles-edificios.js`, dos mallas instanciadas): balcones de madera con baranda y aleros de teja, solo en muros que no son medianeras.
+  - Ya estaban: locales en el primer piso, avisos de colores, cortinas metálicas de noche y rejas en las ventanas bajas de las casas.
+  - **Falta**: nombres reales en los avisos; rejas en las vitrinas; tejado a dos aguas y chimeneas; medir el costo del shader en una GPU real (el detalle de cerca tiene ahora más ramas) y ajustar el brillo de los cuartos de noche con el bloom.
+- **Mobiliario y vendedores** (`js/mobiliario.js`, integrado en `js/main.js` e `index.html`): una malla instanciada por tipo, sobre `calles.piso` y con círculo en `choques`. Canecas, bancas, bolardos, hidrantes, señales (pare, velocidad, prohibido parquear, ceda), 125 paraderos del SITP en avenidas, 165 placas de nomenclatura en cruces, 72 vallas y una pantalla LED que rota tres avisos (la segunda no encontró avenida cercana). Vendedores de día (5:30 a 20:30): tinto, frutas con sombrilla, obleas, mazorca (cuatro en la Plaza de Bolívar), chazas de dulces y minutos y empanadas, en la Séptima, la plaza, el Parque Santander, el Chorro de Quevedo, el Eje Ambiental y San Victorino. **Falta**: las placas muestran texto de ejemplo (CL 12, KR 7…), no el nombre real de la vía; la segunda pantalla LED; humo de la mazorca y vapor del tinto; que los vendedores se muevan o hablen; revisar a la vista que no queden sobre calzada.
+
+Pendiente en general: semáforos y peatones se vieron solo por números, no en pantalla.
 
 ### Prioridad para la próxima sesión: tráfico en Monserrate (reporte de Imderf, 2026-11-03)
 
