@@ -4,7 +4,7 @@ import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
 import { vertexColor, texture, uv, mix, vec3 } from 'three/tsl';
 import { ZONA, aMundo } from './marco.js';
 import { cargarTerreno, mallaTerreno } from './terreno.js';
-import { cargarEdificios, mallasEdificios, noche } from './edificios.js';
+import { cargarEdificios, mallasEdificios, noche, ALTURA_PISO } from './edificios.js';
 import { cargarArboles, mallasArboles } from './arboles.js';
 import { cargarLineas, mallaVias, texturaSuelo } from './vias.js';
 import { construirLugares, puntosDeVista, cameraPos } from './lugares.js';
@@ -89,7 +89,7 @@ await respirar();
 escena.add(mallasEdificios(edificios, terreno, lugares.excluir).grupo);
 paso('Plantando árboles', 15);
 await respirar();
-escena.add(mallasArboles(arboles, terreno, lugares.excluir));
+escena.add(mallasArboles(arboles, terreno, (a) => lugares.excluir({ cx: a.x, cz: a.z })));
 escena.add(mallaVias(vias, terreno));
 paso('Preparando la vista', 10);
 await respirar();
@@ -121,20 +121,48 @@ for (const p of puntosDeVista(lugaresDatos, lugares.centroPlaza)) {
 irA({ x: lugares.centroPlaza[0], z: lugares.centroPlaza[1], dist: 1400, alto: 650 }, true);
 
 // Recorrido a pie y en taxi. Los choques usan las plantas del catastro y las de los lugares hechos a mano.
-const choques = crearChoques([...edificios.filter((e) => !lugares.excluir(e)).map((e) => e.anillos[0]), ...lugares.solidos]);
+// Los muros del catastro llevan la altura aproximada del techo (para la cámara); los de los lugares, sin límite.
+const muros = edificios.filter((e) => !lugares.excluir(e)).map((e) => {
+  const suelo = Math.min(...e.anillos[0].map(([x, z]) => terreno.altura(x, z)));
+  return { anillo: e.anillos[0], techo: suelo + e.pisos * ALTURA_PISO };
+});
+for (const anillo of lugares.solidos) muros.push({ anillo, techo: Infinity });
+// Troncos de los árboles de más de 3 m; los arbustos no estorban.
+const troncos = arboles.filter((a) => a.forma !== 4 && a.alt >= 3).map((a) => [a.x, a.z, a.alt > 12 ? 0.35 : 0.22]);
+const choques = crearChoques(muros, troncos);
 const [px, pz] = [lugares.centroPlaza[0] + 14, lugares.centroPlaza[1] + 14];
 const catedral = lugares.solidos[0];
 const ccx = catedral.reduce((s, [x]) => s + x, 0) / catedral.length, ccz = catedral.reduce((s, [, z]) => s + z, 0) / catedral.length;
 const recorrido = crearRecorrido({
-  escena, camara, terreno, choques, elJoystick: document.querySelector('#joystick'),
+  escena, camara, terreno, choques, elJoystick: document.querySelector('#joystick'), lienzo: renderer.domElement,
   inicio: { x: px, z: pz, rumbo: Math.atan2(-(ccx - px), -(ccz - pz)) }, // mirando hacia la Catedral
 });
+// Punto de la vía vehicular más cercana (troncales a calles de servicio), con su dirección.
+function calleCercana(x, z, radio = 250) {
+  let mejor = null, d2 = radio * radio;
+  for (const { clase, p } of vias) {
+    if (clase > 4) continue;
+    for (let i = 0; i < p.length - 1; i++) {
+      const [ax, az] = p[i], [bx, bz] = p[i + 1], dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
+      const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
+      const qx = ax + dx * t, qz = az + dz * t, d = (qx - x) ** 2 + (qz - z) ** 2;
+      if (d < d2) { d2 = d; mejor = { x: qx, z: qz, rumbo: Math.atan2(-dx, -dz) }; }
+    }
+  }
+  return mejor;
+}
 const botonesModo = [...document.querySelectorAll('#modos button')];
 const botonTaxi = document.querySelector('#taxi');
 function elegirModo(m) {
   const antes = recorrido.modo;
-  if (m === 'caminar' && antes === 'volar' && primeraVez) primeraVez = false;
-  else if (m === 'caminar' && antes === 'volar') recorrido.llevarA(controles.target.x, controles.target.z);
+  // Al bajar de Volar, el personaje aparece donde mira la cámara (cerca de la plaza se queda en su punto de partida).
+  const lejos = Math.hypot(controles.target.x - px, controles.target.z - pz) > 300;
+  if ((m === 'caminar' || m === 'manejar') && antes === 'volar' && (lejos || !primeraVez)) {
+    const calle = calleCercana(controles.target.x, controles.target.z);
+    if (calle) recorrido.llevarA(calle.x, calle.z, calle.rumbo);
+    else recorrido.llevarA(controles.target.x, controles.target.z);
+  }
+  if (antes === 'volar') primeraVez = false;
   recorrido.cambiar(m);
   vuelo = null;
   controles.enabled = m === 'volar';
@@ -219,4 +247,4 @@ await renderer.compileAsync(escena, camara);
 paso('Listo', 10);
 document.querySelector('#carga').classList.add('oculta');
 // Para depurar desde la consola del navegador.
-window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo };
+window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos };

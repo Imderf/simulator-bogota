@@ -54,7 +54,13 @@ Funcionó al primer intento: sin errores de shader y a 120 cuadros por segundo e
 - Taxi amarillo compacto con franja de cuadros, letrero en el techo, ruedas que giran y doblan, faros que alumbran de noche. Física sencilla: aceleración, freno, reversa y giro según la velocidad; máximo unos 54 km/h (80 km/h con Shift).
 - Choques contra las plantas del catastro y de los lugares (`js/choques.js`, rejilla de 16 m).
 - Teclado: W A S D o flechas, Shift, Espacio, E para subir o bajar del taxi, V para volar. En celular: joystick y botón del taxi.
-- Al pasar de Volar a Caminar, el personaje aparece donde mira la cámara.
+- Al pasar de Volar a Caminar o Manejar, el personaje (o el taxi) aparece en la calle más cercana a donde mira la cámara, alineado con ella.
+
+### Recorrido afinado (2026-11-03)
+
+- **Suspensión del taxi**: mide el suelo bajo las cuatro ruedas y la carrocería lo sigue con resortes; se inclina en las lomas, se ladea en las curvas y baja la trompa al frenar.
+- **Árboles**: 27.899 troncos (los de más de 3 m) cuentan para los choques.
+- **Cámara**: se acerca si un muro se interpone y vuelve suave cuando hay espacio. Arrastrar sobre la escena gira la vista; al soltar, vuelve sola detrás.
 
 ## Lo que sigue
 
@@ -63,7 +69,7 @@ Funcionó al primer intento: sin errores de shader y a 120 cuadros por segundo e
 3. **Prueba de peso** en `tests/` que falle si `datos/` pasa de 2 MB.
 4. **Afinar los lugares** con las fotos de Commons: frontón y relojes de la Catedral, arcada del Liévano, ventanas de Colpatria, terrazas reales de Salmona.
 5. **Bosque de los cerros**: árboles generados sobre los Cerros Orientales, que no están en el censo urbano.
-6. **Afinar el recorrido**: que el taxi siga el relieve con suspensión, choques contra los árboles y cámara que no atraviese edificios.
+6. **Tráfico y TransMilenio**: carros que circulen por las vías y buses rojos por la Caracas y la 7.
 7. **Fase 5**: TransMilenio por la Caracas y la 7, taxis amarillos y motos.
 8. **Publicar en GitHub Pages** cuando Imderf y Jaime lo aprueben.
 

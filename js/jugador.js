@@ -140,13 +140,14 @@ function crearControles(elJoystick) {
 // ---------------------------------------------------------------------------------------------------------------
 // El recorrido: modos, física y cámara.
 // ---------------------------------------------------------------------------------------------------------------
-export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoystick }) {
+export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoystick, lienzo }) {
   const persona = crearPersonaje(), taxi = crearTaxi();
   escena.add(persona.raiz, taxi.raiz);
   const controles = crearControles(elJoystick);
 
   const p = { x: inicio.x, z: inicio.z, rumbo: inicio.rumbo, vel: 0 };
-  const c = { x: inicio.x + 9, z: inicio.z + 4, rumbo: inicio.rumbo, vel: 0, giro: 0, rodado: 0 };
+  const c = { x: inicio.x + 9, z: inicio.z + 4, rumbo: inicio.rumbo, vel: 0, giro: 0, rodado: 0,
+    y: null, vy: 0, cabeceo: 0, alabeo: 0, vCabeceo: 0, vAlabeo: 0 };
   choques.empujar(c, 2.1);
   let modo = 'volar';
   const camPos = new THREE.Vector3(), mira = new THREE.Vector3();
@@ -155,13 +156,29 @@ export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoy
     persona.raiz.rotation.y = p.rumbo;
     colocarTaxi();
   };
-  const colocarTaxi = () => {
-    const sx = Math.sin(c.rumbo), sz = Math.cos(c.rumbo);
-    const yA = terreno.altura(c.x - sx * 1.3, c.z - sz * 1.3), yB = terreno.altura(c.x + sx * 1.3, c.z + sz * 1.3);
-    taxi.raiz.position.set(c.x, (yA + yB) / 2, c.z);
+  // Suspensión: se mide el suelo bajo las cuatro ruedas y la carrocería lo sigue con resortes amortiguados,
+  // así se inclina en las lomas de La Candelaria y rebota un poco al frenar o al cambiar de pendiente.
+  const colocarTaxi = (dt = 0) => {
+    const sx = Math.sin(c.rumbo), sz = Math.cos(c.rumbo), lx = Math.cos(c.rumbo), lz = -Math.sin(c.rumbo);
+    const rueda = (adelante, lado) => terreno.altura(c.x - sx * adelante + lx * lado, c.z - sz * adelante + lz * lado);
+    const di = rueda(1.25, -0.78), dd = rueda(1.25, 0.78), ti = rueda(-1.22, -0.78), td = rueda(-1.22, 0.78);
+    const yMeta = (di + dd + ti + td) / 4;
+    const cabeceoMeta = Math.atan2((di + dd) / 2 - (ti + td) / 2, 2.47);
+    const alabeoMeta = Math.atan2((di + ti) / 2 - (dd + td) / 2, 1.56);
+    if (c.y === null || dt === 0) { c.y = yMeta; c.cabeceo = cabeceoMeta; c.alabeo = alabeoMeta; }
+    else {
+      const resorte = (v, vel, meta, k, amort) => { const a = (meta - v) * k - vel * amort; return [v + (vel + a * dt) * dt, vel + a * dt]; };
+      [c.y, c.vy] = resorte(c.y, c.vy, yMeta, 160, 18);
+      [c.cabeceo, c.vCabeceo] = resorte(c.cabeceo, c.vCabeceo, cabeceoMeta + c.inercia * 0.012, 90, 11);
+      [c.alabeo, c.vAlabeo] = resorte(c.alabeo, c.vAlabeo, alabeoMeta - c.giro * Math.abs(c.vel) * 0.004, 90, 11);
+      if (c.y < yMeta - 0.15) { c.y = yMeta - 0.15; c.vy = Math.max(0, c.vy); }
+    }
+    taxi.raiz.position.set(c.x, c.y, c.z);
     taxi.raiz.rotation.set(0, c.rumbo, 0);
-    taxi.raiz.rotateX(Math.atan2(yA - yB, 2.6));
+    taxi.raiz.rotateX(c.cabeceo);
+    taxi.raiz.rotateZ(c.alabeo);
   };
+  c.inercia = 0;
   colocar();
 
   function cambiar(nuevo) {
@@ -169,7 +186,8 @@ export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoy
     if (nuevo === 'manejar') {
       // Si el taxi quedó lejos, aparece junto al personaje.
       if (Math.hypot(c.x - p.x, c.z - p.z) > 25 || modo === 'volar') {
-        c.x = p.x + Math.cos(p.rumbo) * 3; c.z = p.z - Math.sin(p.rumbo) * 3; c.rumbo = p.rumbo; c.vel = 0;
+        const lado = modo === 'volar' ? 0 : 3; // desde Volar el taxi aparece sobre la calle misma
+        c.x = p.x + Math.cos(p.rumbo) * lado; c.z = p.z - Math.sin(p.rumbo) * lado; c.rumbo = p.rumbo; c.vel = 0; c.y = null;
         choques.empujar(c, 2.1);
       }
       persona.raiz.visible = false;
@@ -213,6 +231,8 @@ export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoy
     else if (avance < 0) c.vel -= (c.vel > 0 ? 9 : 2.5) * dt;
     else c.vel *= Math.max(0, 1 - dt * 0.6);
     c.vel = Math.max(-5, Math.min(MAX, c.vel));
+    c.inercia += (((c.vel - (c.velAntes ?? c.vel)) / Math.max(dt, 1e-3)) - c.inercia) * Math.min(1, dt * 6);
+    c.velAntes = c.vel;
     c.giro += (giro * 0.55 - c.giro) * Math.min(1, dt * 6);
     c.rumbo += (c.vel / 2.5) * Math.tan(c.giro * (1 - Math.min(0.6, Math.abs(c.vel) / 40))) * dt;
     c.x -= Math.sin(c.rumbo) * c.vel * dt;
@@ -231,18 +251,42 @@ export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoy
       r.rueda.rotation.x = -c.rodado;
       r.eje.rotation.y = r.delantera ? c.giro : 0;
     }
-    colocarTaxi();
+    colocarTaxi(dt);
     return seguir(c.x, c.z, c.rumbo, 9 + Math.abs(c.vel) * 0.15, 3.6, 1.2, dt);
   }
 
-  // Cámara detrás, suavizada. Si queda bajo el terreno, sube.
+  // Arrastrar sobre la escena gira la cámara alrededor; al soltar vuelve sola detrás.
+  const vista = { yaw: 0, alto: 0, arrastrando: false, px: 0, py: 0 };
+  lienzo.addEventListener('pointerdown', (e) => {
+    if (modo === 'volar' || e.target !== lienzo) return;
+    vista.arrastrando = true; vista.px = e.clientX; vista.py = e.clientY;
+  });
+  addEventListener('pointermove', (e) => {
+    if (!vista.arrastrando) return;
+    vista.yaw -= (e.clientX - vista.px) * 0.006;
+    vista.alto = Math.max(-0.6, Math.min(1.2, vista.alto + (e.clientY - vista.py) * 0.004));
+    vista.px = e.clientX; vista.py = e.clientY;
+  });
+  addEventListener('pointerup', () => { vista.arrastrando = false; });
+
+  // Cámara detrás, suavizada. Si un muro se interpone, se acerca; si queda bajo el terreno, sube.
+  const deseo = new THREE.Vector3();
   function seguir(x, z, rumbo, dist, alto, mirarAlto, dt) {
-    const y = terreno.altura(x, z);
-    const deseo = new THREE.Vector3(x + Math.sin(rumbo) * dist, y + alto, z + Math.cos(rumbo) * dist);
-    deseo.y = Math.max(deseo.y, terreno.altura(deseo.x, deseo.z) + 1.2);
-    camPos.lerp(deseo, 1 - Math.exp(-dt * 5));
-    camara.position.copy(camPos);
+    if (!vista.arrastrando) {
+      vista.yaw *= Math.exp(-dt * 1.5);
+      vista.alto *= Math.exp(-dt * 1.5);
+    }
+    const y = terreno.altura(x, z), a = rumbo + vista.yaw;
     mira.set(x, y + mirarAlto, z);
+    const h = alto * (1 + vista.alto);
+    deseo.set(x + Math.sin(a) * dist, y + h, z + Math.cos(a) * dist);
+    const t = choques.rayo(mira.x, mira.y, mira.z, deseo.x, deseo.y, deseo.z);
+    if (t < 1) deseo.lerpVectors(mira, deseo, Math.max(0.15, t - 0.6 / dist));
+    deseo.y = Math.max(deseo.y, terreno.altura(deseo.x, deseo.z) + 1.2);
+    // Acercarse es inmediato (para no ver a través del muro); alejarse, suave.
+    const cerca = mira.distanceTo(deseo) < mira.distanceTo(camPos);
+    camPos.lerp(deseo, cerca ? 1 : 1 - Math.exp(-dt * 5));
+    camara.position.copy(camPos);
     camara.lookAt(mira);
     return mira;
   }
@@ -251,7 +295,7 @@ export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoy
     cambiar, actualizar,
     get modo() { return modo; },
     posicion: () => (modo === 'manejar' ? [c.x, c.z] : [p.x, p.z]),
-    llevarA(x, z) { p.x = x; p.z = z; p.vel = 0; choques.empujar(p, 0.35); colocar(); },
+    llevarA(x, z, rumbo = p.rumbo) { p.x = x; p.z = z; p.rumbo = rumbo; p.vel = 0; choques.empujar(p, 0.35); colocar(); },
     teclas: controles.teclas,
   };
 }
