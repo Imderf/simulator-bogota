@@ -95,6 +95,24 @@ Lo que más gustó de Slop New York, adaptado:
 - **Sonido sintetizado** (`js/sonido.js`, sin archivos): ciudad, motor, bici, pasos, rotor, campanas cerca de la Catedral; B para el pito.
 - **Piso de las calles** (`calles.piso`): personas, carros y postes se apoyan sobre la calzada o el andén, no sobre el terreno (antes quedaban hundidos medio metro).
 
+### Tandas siguientes (2026-11-03, Imderf)
+
+Publicadas una a una en `zona-centro` (ver los commits para el detalle):
+
+- **Luz y materiales**: SunLight con sombras en cascada, reflejos en pantalla (SSR), gradación de cámara, bruma de la sabana, calles mojadas con charcos, resolución 1:1 con antialiasing.
+- **Fachadas y carros**: fachada bogotana por shader con camino barato de lejos; carros de silueta suave con faros dibujados y sombra de contacto. Casas a nivel del andén en las lomas.
+- **TransMilenio** (`js/transmilenio.js`, `datos/centro/transmilenio.json`): buses articulados y 27 estaciones; botón TransMilenio con la lista de estaciones (reemplaza a Hora azul).
+- **Árboles con hojas** (`js/arboles.js`), sin los que caían sobre la calzada.
+- **Suelo y agua** (`materialTerreno` en `js/terreno.js`, `js/agua.js`): grama, tierra, bosque, roca y páramo; agua con olas y reflejos.
+- **Peatones y tráfico** (`js/peatones.js`, `js/trafico.js`): hasta 300 personas y 190 vehículos en hora pico, según la hora.
+- **Plaza de Bolívar fiel** (`js/lugares.js`, fuentes en `docs/lugares.md`): estatua de Tenerani, losas, faroles, palomas, reflectores; `lugares.pisos` para que nadie se hunda.
+- **Aeropuerto El Dorado** (`js/aeropuerto.js`, `datos/centro/aeropuerto.json`) con aviones que llegan y salen.
+- **Atlas de Bogotá** (`js/minimapa.js`): mapa grande con buscador y clic para ir.
+- **Viajes**: vuelo de cámara al cambiar de lugar en todos los modos; el helicóptero aparece a un costado y por encima de los techos (rayo hacia abajo).
+- **Piso**: `calles.piso` mide en el eje de la vía y suma losas de lugares y estaciones.
+
+En curso: fachadas al nivel de la referencia (vidrio con cuartos, rejas, avisos, balcones), vendedores ambulantes y mobiliario urbano, semáforos y física entre peatones y tráfico.
+
 ## Lo que sigue
 
 1. **Probar en un celular real**: Android e iPhone, con datos móviles.
