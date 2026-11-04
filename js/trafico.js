@@ -841,6 +841,15 @@ export function crearSimulacion(red, flota, { radio = RADIO, semaforos = null } 
       let quitar = dist > radio + 200;
       if (!quitar && (dist > radio + 30 || v.espera > 45 || (v.sinSalida && v.espera > 2))) quitar = oculto(v);
       if (!quitar && sobran > 0 && dist > 100 && oculto(v)) { quitar = true; sobran--; }
+      // Dos carros parados uno dentro del otro (colas que se juntaron en una loma o un cruce, como en Monserrate): se
+      // retira el que lleva más tiempo esperando, aunque se vea; desaparecer pasa más desapercibido que un montón
+      // de carros encimados.
+      if (!quitar && v.espera > 10 && !v.T.moto) {
+        for (const w of activos) {
+          if (w === v || w.T.moto || w.vel > 0.3 || Math.hypot(w.cx - v.cx, w.cz - v.cz) > (v.T.medio + w.T.medio) * 0.95) continue; // medio = mitad del largo
+          if (v.espera > w.espera || (v.espera === w.espera && v.id > w.id)) { quitar = true; break; }
+        }
+      }
       if (quitar) retirar(i);
     }
     // Y aparecen hasta llegar a la densidad de la hora.
