@@ -8,9 +8,16 @@ Empezamos por Bogotá. Después vendrán otras ciudades y pueblos de Colombia.
 
 ## Estado
 
-En planificación. Todavía no hay código para ejecutar.
+Primera versión de la zona Centro. **Pruébalo en línea: https://imderf.github.io/simulator-bogota/** (se publica sola desde la rama `zona-centro`).
 
-- [Plan por fases](docs/plan.md)
+Es para computador. En celular aparece una pantalla que pide abrirlo en un computador o activar «Sitio de escritorio» en el navegador.
+
+Para verla en local: `npm run inicio` y abrir http://127.0.0.1:8801. Ese servidor no guarda caché, así que cada cambio se ve al recargar. Necesita un navegador con WebGPU o WebGL 2.
+
+Para regenerar los datos: `npm install` y luego `npm run datos`.
+
+- [Plan por fases y estado](docs/plan.md)
+- [Peso: por qué carga rápido](docs/peso.md)
 - [Fuentes de datos](docs/fuentes-de-datos.md)
 - [Lugares emblemáticos](docs/lugares.md)
 - [Cómo trabajamos en el repo](docs/colaboracion.md)

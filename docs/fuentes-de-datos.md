@@ -10,6 +10,8 @@ Consultadas contra sus servicios el 2026-11-03.
 | Curvas de nivel | Catastro, [Curva de nivel](https://datosabiertos.bogota.gov.co/dataset/curva-de-nivel-bogota-d-c) | 1.575 líneas, muy gruesas para el terreno | CC BY 4.0 |
 | Relieve | Copernicus DEM GLO-30, celdas `N04_00_W075` y `N04_00_W074` | Modelo de superficie a 30 m | Libre con atribución |
 | Vías, parques, ríos, nombres | OpenStreetMap vía Overpass | Calles con nombre, ciclorrutas, humedales | ODbL |
+| Aeropuerto El Dorado | OpenStreetMap vía Overpass (`tools/aeropuerto.mjs` → `datos/centro/aeropuerto.json`) | Pistas 14L/32R y 14R/32L, calles de rodaje, plataformas, puestos de parqueo, terminales, hangares y torre de control. La elevación (2.548 m) es la oficial: OSM trae 2.648 | ODbL |
+| Estaciones de TransMilenio | OpenStreetMap vía Overpass (`public_transport=station` de la red TransMilenio), con `tools/transmilenio-centro.mjs` | 51 vagones con nombre, posición, sentido, largo y ancho (`datos/centro/transmilenio.json`) | ODbL |
 | TransMilenio y SITP | [Datos abiertos de TransMilenio](https://datosabiertos-transmilenio.hub.arcgis.com/) | Estaciones troncales y paraderos | Por verificar |
 
 ## Cuidado con los datos

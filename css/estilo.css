@@ -1,0 +1,179 @@
+:root {
+  --fondo: rgba(20, 22, 26, 0.72);
+  --fondo-fuerte: rgba(14, 16, 20, 0.88);
+  --borde: rgba(255, 255, 255, 0.1);
+  --texto: #f2f0ea;
+  --suave: rgba(242, 240, 234, 0.62);
+  --acento: #f5c518; /* amarillo taxi bogotano */
+  --tinta: #14110a;
+  --radio: 14px;
+  --margen: 16px;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1320; color: var(--texto); }
+#escena, #escena canvas { position: fixed; inset: 0; display: block; touch-action: none; }
+svg { width: 16px; height: 16px; flex: none; }
+svg.chico { width: 12px; height: 12px; opacity: 0.7; }
+kbd {
+  font: 600 10px/1 system-ui, sans-serif; color: var(--suave); padding: 3px 5px; border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.1);
+}
+button { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+
+/* Paneles de vidrio grafito, como en Slop New York. */
+.panel {
+  background: var(--fondo); border: 1px solid var(--borde); border-radius: var(--radio);
+  backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+#titulo { position: fixed; top: var(--margen); left: var(--margen); padding: 10px 14px; pointer-events: none; }
+#titulo h1 { margin: 0; font-size: 15px; letter-spacing: 0.01em; }
+#titulo p { margin: 2px 0 0; font-size: 11.5px; color: var(--suave); }
+#fps { font-variant-numeric: tabular-nums; color: var(--acento); }
+
+/* Barra de arriba: horas, ajuste fino, tour, sonido y ocultar. */
+#barra { position: fixed; top: var(--margen); right: var(--margen); display: flex; align-items: center; gap: 4px; padding: 5px; }
+#barra button {
+  display: flex; align-items: center; gap: 6px; padding: 7px 10px; border: 0; border-radius: 9px;
+  background: none; color: var(--suave); cursor: pointer; font-size: 13px; transition: background 0.2s, color 0.2s;
+}
+#barra button:hover { color: var(--texto); background: rgba(255, 255, 255, 0.06); }
+#horas { display: flex; gap: 2px; }
+/* El botón activo despliega su nombre; los demás muestran solo el icono. */
+#horas button span { max-width: 0; overflow: hidden; white-space: nowrap; transition: max-width 0.35s ease; }
+#horas button.activo { color: var(--tinta); background: var(--texto); }
+#horas button.activo span { max-width: 110px; }
+#reloj { display: flex; align-items: center; gap: 6px; padding: 0 6px; }
+#reloj input { width: 96px; accent-color: var(--acento); }
+#reloj output { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--suave); min-width: 3em; }
+.divisor { width: 1px; height: 20px; background: var(--borde); margin: 0 4px; }
+#boton-sonido .tachado { display: none; }
+#boton-sonido[aria-pressed="false"] .ondas { display: none; }
+#boton-sonido[aria-pressed="false"] .tachado { display: inline; }
+
+/* Tour: lista de paradas en un popover nativo (cierra solo con Esc o clic afuera). */
+#tour, #estaciones {
+  position: fixed; inset: 64px var(--margen) auto auto; margin: 0; padding: 8px; width: 290px;
+  max-height: calc(100% - 200px); overflow-y: auto; color: var(--texto);
+  background: var(--fondo-fuerte); border: 1px solid var(--borde); border-radius: var(--radio);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  opacity: 0; transform: translateY(-6px); transition: opacity 0.2s, transform 0.2s, display 0.2s allow-discrete;
+}
+/* Con id, como la regla que los esconde: si no, la de id gana y el menú abre invisible. */
+#tour:popover-open, #estaciones:popover-open { opacity: 1; transform: none; }
+@starting-style { #tour:popover-open, #estaciones:popover-open { opacity: 0; transform: translateY(-6px); } }
+.tour-titulo { margin: 4px 8px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--suave); }
+#lugares, #lista-estaciones { list-style: none; margin: 0; padding: 0; counter-reset: parada; }
+.lista li button {
+  display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 8px 10px; text-align: left; font-size: 13.5px;
+  background: none; border: 0; border-radius: 9px; cursor: pointer; counter-increment: parada;
+}
+.lista li button::before { content: counter(parada); font-size: 11px; color: var(--suave); min-width: 1.4em; font-variant-numeric: tabular-nums; }
+.lista li button small { display: block; font-size: 11.5px; color: var(--suave); margin-top: 2px; }
+.lista li button:hover { background: rgba(255, 255, 255, 0.06); }
+.lista li button.activo { background: rgba(245, 197, 24, 0.14); }
+.lista li button.activo::before { color: var(--acento); }
+
+/* Abajo: ayudas de teclado y barra de modos con la píldora que se desliza. */
+#abajo {
+  position: fixed; left: 50%; bottom: var(--margen); transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 8px; transition: opacity 0.35s, transform 0.35s;
+}
+#ayuda { margin: 0; font-size: 12px; color: var(--suave); text-align: center; text-shadow: 0 1px 3px #000; pointer-events: none; }
+#ayuda span { display: none; }
+#ayuda kbd { margin: 0 1px; }
+body[data-modo="libre"] #ayuda .solo-libre, body[data-modo="caminar"] #ayuda .solo-caminar,
+body[data-modo="manejar"] #ayuda .solo-manejar, body[data-modo="bici"] #ayuda .solo-bici,
+body[data-modo="volar"] #ayuda .solo-volar { display: inline; animation: subir 0.4s ease; }
+@keyframes subir { from { opacity: 0; transform: translateY(4px); } }
+#modos { position: relative; display: flex; gap: 2px; padding: 5px; }
+#modos button {
+  position: relative; z-index: 1; display: flex; align-items: center; gap: 7px; padding: 8px 12px;
+  background: none; border: 0; border-radius: 10px; color: var(--suave); cursor: pointer; font-size: 13.5px; transition: color 0.3s;
+}
+#modos button:hover { color: var(--texto); }
+#modos button.activo { color: var(--tinta); font-weight: 600; }
+#modos button.activo kbd { color: var(--tinta); background: rgba(0, 0, 0, 0.12); border-color: transparent; }
+#modos .indicador {
+  position: absolute; top: 5px; bottom: 5px; left: 0; width: var(--ancho, 0); border-radius: 10px; background: var(--acento);
+  transform: translateX(var(--x, 0)); opacity: var(--visible, 0);
+  transition: transform 0.45s cubic-bezier(0.3, 0.9, 0.3, 1), width 0.45s cubic-bezier(0.3, 0.9, 0.3, 1), opacity 0.3s;
+}
+
+/* Tablero de abajo a la derecha: qué se maneja, velocidad y altura. */
+#tablero { position: fixed; right: var(--margen); bottom: var(--margen); min-width: 190px; padding: 10px 14px; }
+#tablero p { margin: 0; }
+#vehiculo { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--suave); }
+.velocidad { display: flex; align-items: baseline; gap: 6px; }
+#velocidad { font-size: 34px; font-weight: 300; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.velocidad span { font-size: 11px; color: var(--suave); }
+#altitud { font-size: 11px; color: var(--suave); font-variant-numeric: tabular-nums; min-height: 1em; }
+body[data-modo="libre"] #tablero .velocidad { display: none; }
+
+#mapa { position: fixed; left: var(--margen); bottom: var(--margen); }
+
+/* Vista limpia (H): todo se esconde menos el botón para volver. */
+body.limpio .panel:not(#barra), body.limpio #abajo, body.limpio #mapa { opacity: 0; pointer-events: none; }
+body.limpio #abajo { transform: translate(-50%, 12px); }
+body.limpio #barra > :not(#boton-ocultar) { display: none; }
+
+#carga {
+  position: fixed; inset: 0; display: grid; place-items: center; background: #0d1320;
+  transition: opacity 0.6s ease; z-index: 10;
+}
+#carga.oculta { opacity: 0; pointer-events: none; }
+#carga p { margin: 0 0 10px; font-size: 14px; color: var(--suave); text-align: center; }
+#carga-pista { width: 240px; height: 3px; background: rgba(255, 255, 255, 0.1); border-radius: 2px; overflow: hidden; }
+#carga-barra { width: 0; height: 100%; background: var(--acento); transition: width 0.3s ease; }
+
+#tactil { display: none; }
+#joystick {
+  position: fixed; left: 24px; bottom: 120px;
+  width: 112px; height: 112px; border-radius: 50%; background: var(--fondo); border: 1px solid var(--borde);
+  touch-action: none; display: grid; place-items: center;
+}
+#joystick span { width: 44px; height: 44px; border-radius: 50%; background: rgba(242, 240, 234, 0.85); }
+#taxi {
+  position: fixed; right: 24px; bottom: 140px;
+  font-size: 14px; color: var(--tinta); background: var(--acento); border: 0; border-radius: 10px; padding: 12px 16px;
+}
+@media (pointer: coarse) {
+  body:not([data-modo="libre"]) #tactil { display: block; }
+  #ayuda, #mapa { display: none; }
+}
+
+@media (max-width: 1080px) {
+  #modos button span, #reloj { display: none; }
+}
+@media (max-width: 760px) {
+  #titulo, #tablero { display: none; }
+  #barra { left: var(--margen); right: var(--margen); justify-content: space-between; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before { transition: none !important; animation: none !important; }
+}
+
+/* Solo computador: en celular se muestra esta pantalla y no se carga la ciudad. */
+#escritorio { display: none; }
+.solo-escritorio #escritorio {
+  position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 24px 16px;
+  background: #0d1320; overflow-y: auto;
+}
+.solo-escritorio #carga, .solo-escritorio .panel, .solo-escritorio #abajo, .solo-escritorio #mapa,
+.solo-escritorio #tactil { display: none !important; }
+#escritorio > div { max-width: 360px; }
+#escritorio h1 { margin: 0 0 12px; font-size: 22px; line-height: 1.25; }
+#escritorio p, #escritorio li { font-size: 15px; line-height: 1.5; color: var(--suave); }
+#escritorio ul { padding-left: 18px; margin: 0 0 20px; }
+#escritorio strong { color: var(--texto); }
+#copiar-enlace {
+  font-size: 15px; color: var(--tinta); background: var(--acento); border: 0; border-radius: 10px;
+  padding: 12px 16px; width: 100%; cursor: pointer;
+}
+#copiar-enlace:focus-visible { outline: 2px solid var(--texto); outline-offset: 2px; }
