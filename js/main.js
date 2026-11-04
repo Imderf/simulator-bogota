@@ -119,7 +119,7 @@ const control = document.querySelector('#hora'), etiqueta = document.querySelect
 const ahora = new Date(), horaBogota = (ahora.getUTCHours() - 5 + 24) % 24 + ahora.getUTCMinutes() / 60;
 control.value = String(Math.round(horaBogota * 4) / 4);
 const dirSol = new THREE.Vector3(), dia = diaDelAno(ahora);
-const C_DIA = new THREE.Color(0xb8c6d4), C_NOCHE = new THREE.Color(0x0d1320), cNiebla = new THREE.Color();
+const C_DIA = new THREE.Color(0xb8c6d4), C_NOCHE = new THREE.Color(0x1a1f2b), cNiebla = new THREE.Color();
 function aplicarHora() {
   const h = Number(control.value);
   etiqueta.textContent = `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
@@ -129,7 +129,8 @@ function aplicarHora() {
   const luz = THREE.MathUtils.smoothstep(altura, -0.05, 0.25);
   sol.intensity = 3.2 * luz;
   sol.color.setHSL(0.09, 0.6, 0.55 + 0.4 * luz);
-  relleno.intensity = 0.15 + 1.0 * THREE.MathUtils.smoothstep(altura, -0.15, 0.3);
+  // De noche queda algo de luz: el resplandor naranja de la ciudad en la bruma deja ver cerros y calles.
+  relleno.intensity = 0.4 + 0.85 * THREE.MathUtils.smoothstep(altura, -0.15, 0.3);
   noche.value = 1 - THREE.MathUtils.smoothstep(altura, -0.08, 0.12);
   escena.fog.color.copy(cNiebla.copy(C_NOCHE).lerp(C_DIA, THREE.MathUtils.smoothstep(altura, -0.12, 0.2)));
   renderer.toneMappingExposure = 0.45 + 0.15 * luz;

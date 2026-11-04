@@ -129,6 +129,34 @@ class Obra {
     this.agregar(material, geometria(pos, fac));
   }
 
+  // Disco vertical (relojes) mirando hacia `normal` ([x, z]).
+  disco(material, [x, y, z], normal, radio) {
+    const g = new THREE.CylinderGeometry(radio, radio, 0.25, 24).toNonIndexed();
+    g.rotateX(Math.PI / 2);
+    g.rotateY(Math.atan2(normal[0], normal[1]));
+    g.translate(x + normal[0] * 0.15, y, z + normal[1] * 0.15);
+    g.deleteAttribute('uv');
+    g.setAttribute('fachada', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+    this.agregar(material, g);
+  }
+
+  // Marco de una fachada: `a` corre a lo largo del frente y `b` sale hacia afuera (0 = plano del frente).
+  frente(r, lado) {
+    const f = (lado.eje === 'u' ? r.mu : r.mw) * lado.signo;
+    const L = (a, b) => (lado.eje === 'u' ? [f + b * lado.signo, a] : [a, f + b * lado.signo]);
+    const normal = lado.eje === 'u' ? [r.c * lado.signo, r.s * lado.signo] : [-r.s * lado.signo, r.c * lado.signo];
+    return {
+      L, normal, largo: lado.eje === 'u' ? r.mw : r.mu,
+      punto: (a, b) => r.punto(...L(a, b)),
+      // Pieza rectangular pegada al frente: ancho a lo largo, fondo hacia afuera.
+      panel: (material, a, b, ancho, fondo, y0, y1) => {
+        const [u, w] = L(a, b);
+        const [du, dw] = lado.eje === 'u' ? [fondo / 2, ancho / 2] : [ancho / 2, fondo / 2];
+        this.caja(material, r, u, w, du, dw, y0, y1);
+      },
+    };
+  }
+
   mallas(nombre) {
     const grupo = new THREE.Group();
     grupo.name = nombre;
@@ -195,6 +223,15 @@ function ladrillo(color, { ventanas = null } = {}) {
   return m;
 }
 
+// Balaustrada: barrotes claros con huecos oscuros entre ellos, sin geometría extra.
+function balaustrada(color) {
+  const f = fac();
+  const hueco = step(0.55, fract(f.x.div(0.38))).mul(step(0.18, f.y)).mul(step(f.y, 0.95));
+  const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.9 });
+  m.colorNode = mix(vec3(...new THREE.Color(color).toArray()), vec3(0.18, 0.17, 0.16), hueco);
+  return m;
+}
+
 function plano(color, opciones = {}) {
   return new THREE.MeshStandardNodeMaterial({ color, roughness: 0.85, ...opciones });
 }
@@ -235,8 +272,8 @@ export function construirLugares(datos, terreno, edificios) {
   const suelo = (x, z) => terreno.altura(x, z);
   const minSuelo = (anillo) => Math.min(...anillo.map(([x, z]) => suelo(x, z)));
   // En los cerros la malla de 32 m redondea las cimas: se hace una explanada a la altura media de la planta.
-  const explanada = (anillo) => {
-    const y = anillo.reduce((s, [x, z]) => s + suelo(x, z), 0) / anillo.length;
+  const explanada = (anillo, nivel) => {
+    const y = nivel ?? anillo.reduce((s, [x, z]) => s + suelo(x, z), 0) / anillo.length;
     terreno.aplanar(anillo, y);
     return y;
   };
@@ -260,6 +297,10 @@ export function construirLugares(datos, terreno, edificios) {
     vidrioGris: vidrioTorre(0x8e98a3),
     cable: new THREE.LineBasicNodeMaterial({ color: 0x222222 }),
     cabina: plano(0xc0392b),
+    madera: plano(0x5b3b22, { roughness: 0.7 }),
+    sombra: plano(0x2a2622, { roughness: 1 }),
+    reloj: plano(0xf2efe6, { roughness: 0.5 }),
+    balaustrada: balaustrada(0xcdb88e),
   };
 
   const excluir = [];
@@ -273,8 +314,13 @@ export function construirLugares(datos, terreno, edificios) {
     const r = rectangulo(plantas[k].anillos[0]);
     centroPlaza[0] += r.cx / 4; centroPlaza[1] += r.cz / 4;
   }
+  const yPlaza = suelo(...centroPlaza);
   {
-    const yp = suelo(...centroPlaza);
+    const yp = yPlaza;
+    // La plaza es plana: se aplana el terreno del cuadrado y sus andenes.
+    const rp = { ...capitolio, cx: centroPlaza[0], cz: centroPlaza[1] };
+    rp.punto = (u, w) => [rp.cx + u * rp.c - w * rp.s, rp.cz + u * rp.s + w * rp.c];
+    terreno.aplanar([rp.punto(-64, -64), rp.punto(64, -64), rp.punto(64, 64), rp.punto(-64, 64)], yp, 40);
     // Marco de la plaza alineado con el Capitolio. Unos 13.900 m² con las calles (es.wiki): ~105 m de lado sin ellas (aprox.).
     const r = { ...capitolio, cx: centroPlaza[0], cz: centroPlaza[1] };
     r.punto = (u, w) => [r.cx + u * r.c - w * r.s, r.cz + u * r.s + w * r.c];
@@ -290,7 +336,7 @@ export function construirLugares(datos, terreno, edificios) {
   // de "seis filas de tres columnas" (es.wiki). Alturas aprox. según las fotos de Commons.
   {
     const { anillos: [planta], huecos } = plantas.capitolio;
-    const y0 = minSuelo(planta);
+    const y0 = explanada(planta, yPlaza) // al nivel de la plaza;
     obra.prisma(M.arenisca, planta, y0 - 2, y0 + 3, huecos);
     obra.prisma(M.areniscaVentanas, planta, y0 + 3, y0 + 17, huecos);
     obra.prisma(M.areniscaOscura, planta, y0 + 17, y0 + 18.6, huecos);
@@ -305,36 +351,67 @@ export function construirLugares(datos, terreno, edificios) {
     const [cu, cw, du, dw] = lado.eje === 'u' ? [fondo, 0, 6.2, 16] : [0, fondo, 16, 6.2];
     obra.caja(M.arenisca, r, cu, cw, du, dw, y0, y0 + 3);
     obra.caja(M.areniscaOscura, r, cu, cw, du, dw, y0 + 15.5, y0 + 18.6);
+    // Balaustrada y urnas sobre la cornisa (foto de Commons de la fachada sur).
+    obra.prisma(M.balaustrada, planta, y0 + 18.6, y0 + 19.8, huecos, { techo: false });
+    const F = obra.frente(r, lado);
+    for (let a = -F.largo + 4; a <= F.largo - 4; a += 9) {
+      const p = F.punto(a, -0.4);
+      obra.torno(M.areniscaOscura, p, [[0.45, y0 + 19.8], [0.55, y0 + 20.4], [0.3, y0 + 20.9], [0.42, y0 + 21.5], [0, y0 + 21.7]], 8);
+    }
   }
 
   // --- Catedral Primada: dos torres de 52 m (es.wiki) en la fachada hacia la plaza, frontón al centro,
-  // piedra arenisca clara (fotos de Commons). Ancho de fachada sin fuente: ~48 m aprox.
+  // piedra arenisca clara. Puertas: la central de 7,20 × 3,60 m y las laterales de 5,60 × 2,80 m (es.wiki).
+  // Proporciones de cornisas, campanarios y reloj medidas sobre la foto de Commons de 2021. Ancho ~48 m aprox.
   {
     const [planta] = plantas.catedral.anillos;
-    const y0 = minSuelo(planta);
+    const y0 = explanada(planta, yPlaza) // al nivel de la plaza;
     obra.prisma(M.arenisca, planta, y0 - 2, y0 + 24);
-    const r = rectangulo(planta), lado = r.ladoHacia(centroPlaza);
-    const f = (lado.eje === 'u' ? r.mu : r.mw) * lado.signo;
-    const L = (a, b) => (lado.eje === 'u' ? [f + b * lado.signo, a] : [a, f + b * lado.signo]);
-    const medio = (lado.eje === 'u' ? r.mw : r.mu);
-    const centro = Math.max(-medio + 26, Math.min(medio - 26, 0));
+    const r = rectangulo(planta), F = obra.frente(r, r.ladoHacia(centroPlaza));
+    const c = Math.max(-F.largo + 26, Math.min(F.largo - 26, 0));
+    // Cuerpo central y frontón.
+    F.panel(M.arenisca, c, -2.5, 30, 5, y0, y0 + 30);
+    F.panel(M.areniscaOscura, c, -2.5, 31, 5.6, y0 + 30, y0 + 31);
+    const [fu, fw] = F.L(c, -2.5);
+    // fronton() corre a lo largo de u: si la fachada mira por u, se le pasa el marco girado.
+    if (F.L(1, 0)[1] === 1) obra.fronton(M.areniscaOscura, { ...r, punto: (a, b) => r.punto(b, a), s: -r.c, c: r.s }, fw, fu, 12, 2.5, y0 + 31, 6.5);
+    else obra.fronton(M.areniscaOscura, r, fu, fw, 12, 2.5, y0 + 31, 6.5);
+    const cima = F.punto(c, -2.5);
+    obra.cilindro(M.arenisca, cima, 0.5, y0 + 37.3, y0 + 39, 8);
+    obra.caja(M.bronce, { ...r, punto: (u, w) => [cima[0] + u * r.c - w * r.s, cima[1] + u * r.s + w * r.c] }, 0, 0, 0.12, 0.6, y0 + 39, y0 + 40.6);
+    // Cornisa principal a ~16,4 m y basamento a lo ancho de toda la fachada.
+    F.panel(M.areniscaOscura, c, 0.3, 49, 1.2, y0 + 15.8, y0 + 17);
+    F.panel(M.areniscaOscura, c, 0.2, 49, 1, y0, y0 + 1.1);
+    // Pilastras del primer cuerpo.
+    for (const a of [-14.5, -8, 8, 14.5]) F.panel(M.arenisca, c + a, 0.25, 1.4, 0.6, y0 + 1.1, y0 + 15.8);
+    // Puertas de madera.
+    F.panel(M.madera, c, 0.12, 3.6, 0.4, y0, y0 + 7.2);
+    for (const t of [-1, 1]) F.panel(M.madera, c + t * 11.2, 0.12, 2.8, 0.4, y0, y0 + 5.6);
+    // Hornacina sobre la puerta central.
+    F.panel(M.sombra, c, 0.1, 2.2, 0.3, y0 + 20, y0 + 24.5);
     for (const t of [-1, 1]) {
-      const [u, w] = L(centro + t * 19.5, -4.5);
-      const du = 4.6, dw = 4.6;
-      obra.caja(M.arenisca, r, u, w, du, dw, y0, y0 + 30);
-      obra.caja(M.areniscaOscura, r, u, w, du + 0.4, dw + 0.4, y0 + 30, y0 + 31);
-      obra.caja(M.arenisca, r, u, w, du - 0.6, dw - 0.6, y0 + 31, y0 + 40);
-      obra.caja(M.areniscaOscura, r, u, w, du - 0.3, dw - 0.3, y0 + 40, y0 + 41);
-      const p = r.punto(u, w);
+      const a = c + t * 19.5;
+      F.panel(M.arenisca, a, -4.5, 9.2, 9.2, y0, y0 + 30);
+      F.panel(M.areniscaOscura, a, -4.5, 10, 10, y0 + 30, y0 + 31);
+      F.panel(M.arenisca, a, -4.5, 8, 8, y0 + 31, y0 + 40);
+      F.panel(M.areniscaOscura, a, -4.5, 8.6, 8.6, y0 + 40, y0 + 41);
+      // Vanos de campanas (frente y costados) y ventana del cuerpo bajo de la torre.
+      F.panel(M.sombra, a, -0.45, 2.2, 0.3, y0 + 33.4, y0 + 37.8);
+      F.panel(M.sombra, a, 0.1, 1.8, 0.3, y0 + 19, y0 + 23.5);
+      const p = F.punto(a, -4.5);
       obra.torno(M.cupulaGris, p, [[3.6, y0 + 41], [3.5, y0 + 43], [2.8, y0 + 45.5], [1.4, y0 + 47], [0.8, y0 + 47.2], [0, y0 + 47.3]]);
       obra.cilindro(M.arenisca, p, 0.75, y0 + 47, y0 + 49.5, 8);
       obra.torno(M.cupulaGris, p, [[0.85, y0 + 49.5], [0.5, y0 + 50.3], [0.1, y0 + 51.2], [0, y0 + 52]], 8);
+      // Pináculos en las esquinas del campanario.
+      for (const [da, db] of [[-3.6, -0.9], [3.6, -0.9]]) {
+        const q = F.punto(a + da, db);
+        obra.torno(M.arenisca, q, [[0.35, y0 + 41], [0.3, y0 + 42.2], [0, y0 + 43.4]], 6);
+      }
     }
-    const [u, w] = L(centro, -2.5);
-    const [du, dw] = lado.eje === 'u' ? [2.5, 15] : [15, 2.5];
-    obra.caja(M.arenisca, r, u, w, du, dw, y0, y0 + 31);
-    if (lado.eje === 'u') obra.fronton(M.areniscaOscura, { ...r, punto: (a, b) => r.punto(b, a), s: -r.c, c: r.s }, w, u, 12, 2.5, y0 + 31, 6);
-    else obra.fronton(M.areniscaOscura, r, u, w, 12, 2.5, y0 + 31, 6);
+    // Reloj en la torre norte, la de San Emigdio (es.wiki).
+    const norte = [-1, 1].map((t) => c + t * 19.5).sort((a, b) => F.punto(a, 0)[1] - F.punto(b, 0)[1])[0];
+    const pr = F.punto(norte, -0.5);
+    obra.disco(M.reloj, [pr[0], y0 + 32.2, pr[1]], F.normal, 0.95);
     excluir.push(planta);
   }
 
@@ -342,7 +419,7 @@ export function construirLugares(datos, terreno, edificios) {
   // y mansardas en las esquinas (foto de Commons de 2020). 3 niveles (es.wiki). Alturas aprox.
   {
     const { anillos: [planta], huecos } = plantas.lievano;
-    const y0 = minSuelo(planta);
+    const y0 = explanada(planta, yPlaza) // al nivel de la plaza;
     obra.prisma(M.estucoAmarillo, planta, y0 - 2, y0 + 17, huecos);
     obra.prisma(M.pizarra, planta, y0 + 17, y0 + 18.5, huecos);
     const r = rectangulo(planta), lado = r.ladoHacia(centroPlaza);
@@ -352,13 +429,17 @@ export function construirLugares(datos, terreno, edificios) {
       const [u, w] = lado.eje === 'u' ? [b, a] : [a, b];
       obra.caja(M.pizarra, r, u, w, 9, 9, y0 + 18.5, y0 + 24);
     }
+    // Arcada del primer piso: vanos oscuros entre pilares, un poco hundidos.
+    const F = obra.frente(r, lado);
+    for (let a = -F.largo + 6; a <= F.largo - 6; a += 5.6) F.panel(M.sombra, a, 0.05, 3.4, 0.2, y0, y0 + 4.6);
+    F.panel(M.estucoBlanco, 0, 0.25, F.largo * 2, 0.5, y0 + 5, y0 + 5.6);
     excluir.push(planta);
   }
 
   // --- Palacio de Justicia: bloque de piedra (Roberto Londoño). Alto sin fuente: ~24 m aprox.
   {
     const { anillos: [planta], huecos } = plantas.justicia;
-    const y0 = minSuelo(planta);
+    const y0 = explanada(planta, yPlaza) // al nivel de la plaza;
     obra.prisma(M.areniscaOscura, planta, y0 - 2, y0 + 4, huecos);
     obra.prisma(M.areniscaVentanas, planta, y0 + 4, y0 + 24, huecos);
     excluir.push(planta);
@@ -377,8 +458,12 @@ export function construirLugares(datos, terreno, edificios) {
   {
     const [planta] = plantas.colpatria.anillos;
     const y0 = minSuelo(planta);
-    obra.prisma(M.colpatria, planta, y0 - 2, y0 + 192);
     const r = rectangulo(planta);
+    const escala = (f) => planta.map(([x, z]) => [r.cx + (x - r.cx) * f, r.cz + (z - r.cz) * f]);
+    // La punta se retrae en dos escalones (foto de Commons de 2021).
+    obra.prisma(M.colpatria, planta, y0 - 2, y0 + 180);
+    obra.prisma(M.colpatria, escala(0.93), y0 + 180, y0 + 187);
+    obra.prisma(M.colpatria, escala(0.85), y0 + 187, y0 + 192);
     obra.caja(M.estucoBlanco, r, 0, 0, r.mu - 3, r.mw - 3, y0 + 192, y0 + 195);
     obra.cilindro(M.pizarra, [r.cx, r.cz], 7, y0 + 195, y0 + 196, 20);
     excluir.push(planta);
@@ -387,7 +472,7 @@ export function construirLugares(datos, terreno, edificios) {
   // --- BD Bacatá: Torre Sur 216 m y Torre Norte 167 m (es.wiki, Skyscraper Center). La planta de OSM
   // de la Torre Sur está incompleta, así que se toman las del catastro (las dos construcciones con más pisos).
   {
-    const cerca = edificios.filter((e) => Math.hypot(e.cx - 640, e.cz - 760) < 120).sort((a, b) => b.pisos - a.pisos);
+    const cerca = edificios.filter((e) => Math.hypot(e.cx - 640, e.cz + 760) < 120).sort((a, b) => b.pisos - a.pisos);
     const [sur, norte] = cerca;
     for (const [e, alto, mat] of [[sur, 216, M.vidrioAzul], [norte, 167, M.vidrioGris]]) {
       if (!e) continue;
