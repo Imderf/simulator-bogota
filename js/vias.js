@@ -11,8 +11,9 @@ const ALTO = [0.5, 0.48, 0.46, 0.44, 0.42, 0.4, 0.43, 0.4, 0.39];
 const BORDILLO = 0.15;
 
 // Ancho real: por carriles si OpenStreetMap los dice (3,2 m; 3,5 m los de TransMilenio), si no, por clase.
-export const anchoVia = (v) => (v.clase <= 4 && v.carriles ? v.carriles * (v.bus ? 3.5 : 3.2) + 0.6 : v.bus ? 7 : ANCHO[v.clase]);
-export const andenVia = (v) => (v.bus ? 0 : ANDEN[v.clase] || 0);
+// `limite` lo pone separarCalzadas: dos calzadas paralelas dibujadas más cerca que su ancho no se pisan.
+export const anchoVia = (v) => Math.min(v.limite ?? 99, v.clase <= 4 && v.carriles ? v.carriles * (v.bus ? 3.5 : 3.2) + 0.6 : v.bus ? 7 : ANCHO[v.clase]);
+export const andenVia = (v) => (v.bus || v.limite ? 0 : ANDEN[v.clase] || 0);
 // Altura de la cinta sobre el terreno (se levanta para que el relieve de 32 m no la atraviese) y del bordillo.
 export const altoVia = (v) => ALTO[v.clase];
 export { BORDILLO };
@@ -29,7 +30,68 @@ export async function cargarLineas(url, firma) {
     if (b & 2) p.reverse();
     lista[k] = { clase, p, unSentido: !!(b & 1), bus: !!(b & 4), carriles };
   }
+  if (firma === 'BOV2') separarCalzadas(lista);
   return lista;
+}
+
+// Calzadas paralelas muy juntas (las dos de una avenida con separador, como la Circunvalar en la loma): OpenStreetMap las
+// dibuja a veces a menos de su ancho, y sus asfaltos, andenes y carriles de tráfico se superponen. A cada una se le pone
+// un `limite` de ancho igual a la distancia entre ejes (nunca menos de un carril) y sin andén del lado del separador.
+// Se miden la distancia lateral a vías casi paralelas que no son su continuación (lateral > 1,5 m).
+function separarCalzadas(vias) {
+  const C = 24, celdas = new Map(), muestras = [];
+  vias.forEach((v, id) => {
+    if (v.clase > 3 || v.bus) return;
+    const w = (v.carriles ? v.carriles * 3.2 + 0.6 : ANCHO[v.clase]) / 2;
+    for (let i = 0; i < v.p.length - 1; i++) {
+      const [ax, az] = v.p[i], [bx, bz] = v.p[i + 1], l = Math.hypot(bx - ax, bz - az);
+      if (l < 0.01) continue;
+      const n = Math.ceil(l / 4);
+      for (let k = 0; k < n; k++) {
+        const t = (k + 0.5) / n, m = { x: ax + (bx - ax) * t, z: az + (bz - az) * t, ux: (bx - ax) / l, uz: (bz - az) / l, w, v };
+        const c = `${Math.floor(m.x / C)},${Math.floor(m.z / C)}`;
+        (celdas.get(c) ?? celdas.set(c, []).get(c)).push(m);
+        muestras.push(m);
+      }
+    }
+  });
+  for (const m of muestras) {
+    const ci = Math.floor(m.x / C), cj = Math.floor(m.z / C);
+    for (let a = ci - 1; a <= ci + 1; a++) for (let b = cj - 1; b <= cj + 1; b++) for (const o of celdas.get(`${a},${b}`) || []) {
+      if (o.v === m.v || Math.abs(m.ux * o.ux + m.uz * o.uz) < 0.9) continue;
+      const dx = o.x - m.x, dz = o.z - m.z, lat = Math.abs(dx * -m.uz + dz * m.ux), lon = Math.abs(dx * m.ux + dz * m.uz);
+      if (lat < 1.5 || lon > 5 || lat >= (m.w + o.w) * 0.97) continue;
+      m.v.limite = Math.min(m.v.limite ?? 99, Math.max(3.4, lat - 0.1));
+    }
+  }
+}
+
+// Desplazamiento a la derecha en cada vértice, con inglete: en los quiebres la cinta sigue continua y no se abre en
+// la parte de afuera ni se cruza por adentro. El largo es 1/cos de la mitad del giro, recortado para que el borde de
+// adentro (a W metros del eje) no pase de la mitad del tramo más corto: así no se dobla en las curvas cerradas.
+export function ingletes(p, W) {
+  const n = p.length, L = new Float64Array(Math.max(n - 1, 0)), ux = new Float64Array(L.length), uz = new Float64Array(L.length);
+  for (let i = 0; i < L.length; i++) {
+    const dx = p[i + 1][0] - p[i][0], dz = p[i + 1][1] - p[i][1], l = Math.hypot(dx, dz);
+    L[i] = l;
+    if (l > 0.01) { ux[i] = dx / l; uz[i] = dz / l; }
+  }
+  const mx = new Float64Array(n), mz = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let a = i - 1, b = i;
+    while (a >= 0 && L[a] <= 0.01) a--;
+    while (b < L.length && L[b] <= 0.01) b++;
+    if (a < 0) a = b;
+    if (b >= L.length) b = a;
+    if (a < 0 || a >= L.length) continue; // vía sin tramos
+    let sx = -uz[a] - uz[b], sz = ux[a] + ux[b];
+    const l = Math.hypot(sx, sz);
+    if (l < 1e-6) { sx = -uz[b]; sz = ux[b]; } else { sx /= l; sz /= l; }
+    let f = 1 / Math.max(0.5, sx * -uz[b] + sz * ux[b]);
+    f = Math.min(f, Math.sqrt(1 + (Math.min(L[a], L[b]) / (2 * Math.max(W, 0.1))) ** 2));
+    mx[i] = sx * f; mz[i] = sz * f;
+  }
+  return { mx, mz };
 }
 
 // Calzadas de carros con asfalto y marcas por shader, andenes con bordillo que se cortan en los cruces, y el resto
@@ -61,7 +123,7 @@ function calzadas(vias, terreno) {
     // codigo: 0 sin marcas, 1 un sentido, 2 doble sentido, 3 TransMilenio. Bordes blancos en las avenidas.
     const codigo = v.bus ? 3 : v.clase === 4 ? 0 : v.unSentido ? 1 : 2, bordes = v.clase <= 2 && !v.bus ? 1 : 0;
     // Distancia a lo largo de la vía y cruces sobre ella.
-    const us = [0];
+    const ing = ingletes(v.p, w + an), us = [0];
     for (let i = 1; i < v.p.length; i++) us.push(us[i - 1] + Math.hypot(v.p[i][0] - v.p[i - 1][0], v.p[i][1] - v.p[i - 1][1]));
     const nodos = [];
     v.p.forEach(([x, z], i) => { const c = cruces.get(k(x, z)); if (c.n >= 3) nodos.push([us[i], c.r]); });
@@ -70,7 +132,9 @@ function calzadas(vias, terreno) {
     for (let i = 0; i < v.p.length - 1; i++) {
       const [ax, az] = v.p[i], [bx, bz] = v.p[i + 1], l = us[i + 1] - us[i];
       if (l < 0.01) continue;
-      const ux = (bx - ax) / l, uz = (bz - az) / l, nx = -uz, nz = ux;
+      const ux = (bx - ax) / l, uz = (bz - az) / l;
+      // Desplazamiento a la derecha a s metros del vértice i (interpolado entre los dos ingletes).
+      const mit = (s) => { const t = s / l; return [ing.mx[i] + (ing.mx[i + 1] - ing.mx[i]) * t, ing.mz[i] + (ing.mz[i + 1] - ing.mz[i]) * t]; };
       // Puntos de corte: cada 12 m más los bordes de cruces y cebras, y el punto medio entre dos cruces.
       const ts = new Set([0, l]);
       for (let s = 12; s < l; s += 12) ts.add(s);
@@ -81,10 +145,10 @@ function calzadas(vias, terreno) {
         const s0 = lista[j], s1 = lista[j + 1];
         const x0 = ax + ux * s0, z0 = az + uz * s0, x1 = ax + ux * s1, z1 = az + uz * s1;
         const y0 = terreno.altura(x0, z0) + dy, y1 = terreno.altura(x1, z1) + dy;
-        const e0 = ext(us[i] + s0), e1 = ext(us[i] + s1);
+        const e0 = ext(us[i] + s0), e1 = ext(us[i] + s1), [nx0, nz0] = mit(s0), [nx1, nz1] = mit(s1);
         // Calzada: un borde en -w y el otro en +w (n apunta a la derecha del sentido del dibujo).
-        const q = [[x0 - nx * w, y0, z0 - nz * w, -w, us[i] + s0, e0], [x1 - nx * w, y1, z1 - nz * w, -w, us[i] + s1, e1],
-          [x1 + nx * w, y1, z1 + nz * w, w, us[i] + s1, e1], [x0 + nx * w, y0, z0 + nz * w, w, us[i] + s0, e0]];
+        const q = [[x0 - nx0 * w, y0, z0 - nz0 * w, -w, us[i] + s0, e0], [x1 - nx1 * w, y1, z1 - nz1 * w, -w, us[i] + s1, e1],
+          [x1 + nx1 * w, y1, z1 + nz1 * w, w, us[i] + s1, e1], [x0 + nx0 * w, y0, z0 + nz0 * w, w, us[i] + s0, e0]];
         for (const t of [0, 2, 1, 0, 3, 2]) {
           const [x, y, z, lat, u, e] = q[t];
           pos.push(x, y, z); via.push(u, lat, w, e); tipo.push(v.carriles, codigo, bordes);
@@ -92,8 +156,8 @@ function calzadas(vias, terreno) {
         // Andenes a lado y lado, fuera de los cruces: bordillo vertical y superficie un poco más alta.
         if (!an || e0 < -0.01 || e1 < -0.01) continue;
         for (const lado of [-1, 1]) {
-          const ix0 = x0 - nx * w * lado, iz0 = z0 - nz * w * lado, ix1 = x1 - nx * w * lado, iz1 = z1 - nz * w * lado;
-          const ox0 = x0 - nx * (w + an) * lado, oz0 = z0 - nz * (w + an) * lado, ox1 = x1 - nx * (w + an) * lado, oz1 = z1 - nz * (w + an) * lado;
+          const ix0 = x0 - nx0 * w * lado, iz0 = z0 - nz0 * w * lado, ix1 = x1 - nx1 * w * lado, iz1 = z1 - nz1 * w * lado;
+          const ox0 = x0 - nx0 * (w + an) * lado, oz0 = z0 - nz0 * (w + an) * lado, ox1 = x1 - nx1 * (w + an) * lado, oz1 = z1 - nz1 * (w + an) * lado;
           const t0 = y0 + BORDILLO, t1 = y1 + BORDILLO;
           const o0 = Math.max(t0, terreno.altura(ox0, oz0) + dy + BORDILLO), o1 = Math.max(t1, terreno.altura(ox1, oz1) + dy + BORDILLO);
           const caras = [
@@ -188,18 +252,20 @@ export const mojado = uniform(0.1);
 function cintas(vias, terreno) {
   const pos = [], col = [];
   for (const { clase, p } of vias) {
-    const w = ANCHO[clase] / 2, c = COLOR[clase], dy = ALTO[clase];
+    const w = ANCHO[clase] / 2, c = COLOR[clase], dy = ALTO[clase], ing = ingletes(p, w);
     for (let i = 0; i < p.length - 1; i++) {
       const [ax, az] = p[i], [bx, bz] = p[i + 1];
       const largo = Math.hypot(bx - ax, bz - az);
       if (largo < 0.01) continue;
-      const nx = -(bz - az) / largo * w, nz = (bx - ax) / largo * w;
       const pasos = Math.max(1, Math.ceil(largo / 12));
       for (let s = 0; s < pasos; s++) {
         const t0 = s / pasos, t1 = (s + 1) / pasos;
         const x0 = ax + (bx - ax) * t0, z0 = az + (bz - az) * t0, x1 = ax + (bx - ax) * t1, z1 = az + (bz - az) * t1;
         const y0 = terreno.altura(x0, z0) + dy, y1 = terreno.altura(x1, z1) + dy;
-        const v = [[x0 - nx, y0, z0 - nz], [x1 - nx, y1, z1 - nz], [x1 + nx, y1, z1 + nz], [x0 + nx, y0, z0 + nz]];
+        // Inglete interpolado en cada punta del pedazo (misma regla que en las calzadas).
+        const n0x = (ing.mx[i] + (ing.mx[i + 1] - ing.mx[i]) * t0) * w, n0z = (ing.mz[i] + (ing.mz[i + 1] - ing.mz[i]) * t0) * w;
+        const n1x = (ing.mx[i] + (ing.mx[i + 1] - ing.mx[i]) * t1) * w, n1z = (ing.mz[i] + (ing.mz[i + 1] - ing.mz[i]) * t1) * w;
+        const v = [[x0 - n0x, y0, z0 - n0z], [x1 - n1x, y1, z1 - n1z], [x1 + n1x, y1, z1 + n1z], [x0 + n0x, y0, z0 + n0z]];
         for (const k of [0, 2, 1, 0, 3, 2]) { pos.push(...v[k]); col.push(c.r, c.g, c.b); }
       }
     }

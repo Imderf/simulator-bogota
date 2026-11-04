@@ -146,7 +146,10 @@ function arista(id, via, w, pts, desde, hasta) {
     let sx = -uz[a] - uz[b], sz = ux[a] + ux[b];
     const l = Math.hypot(sx, sz);
     if (l < 1e-6) { sx = -uz[b]; sz = ux[b]; } else { sx /= l; sz /= l; }
-    const f = 1 / Math.max(0.5, sx * -uz[b] + sz * ux[b]);
+    // Recortado para que el carril de afuera no pase de la mitad del tramo más corto (curvas cerradas de la loma: sin
+    // esto el carril de adentro hace un lazo y el carro se tuerce).
+    const lMin = Math.min(acum[a + 1] - acum[a], acum[b + 1] - acum[b]) || 1;
+    const f = Math.min(1 / Math.max(0.5, sx * -uz[b] + sz * ux[b]), Math.sqrt(1 + (lMin / (2 * Math.max(w, 0.5))) ** 2));
     mx[i] = sx * f; mz[i] = sz * f;
     // Radio aproximado del quiebre: arco tangente a la mitad de los dos tramos. Velocidad para 2,4 m/s² laterales.
     if (i > 0 && i < n - 1) {
