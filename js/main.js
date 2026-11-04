@@ -26,6 +26,7 @@ import { crearSonido } from './sonido.js';
 import { crearTransMilenio } from './transmilenio.js';
 import { crearPeatones } from './peatones.js';
 import { crearTrafico } from './trafico.js';
+import { crearAeropuerto } from './aeropuerto.js';
 
 const DATOS = `./datos/${ZONA.nombre}/`;
 const barra = document.querySelector('#carga-barra'), textoCarga = document.querySelector('#carga-texto');
@@ -95,7 +96,7 @@ function hornearCielo() {
 }
 // Bruma de la sabana con el color del cielo horneado hacia donde se mira (Adaptado de Slop New York, mrdoob, MIT:
 // lighting.js, createAerialFogNode). Más espesa abajo; de noche se mezcla con azul oscuro porque el cielo está negro.
-const densidadNiebla = uniform(0.00009), nocheNiebla = uniform(0);
+const densidadNiebla = uniform(0.00006), nocheNiebla = uniform(0);
 function nieblaAerea() {
   const hacia = positionWorld.sub(cameraPosition), dist = length(hacia), dir = hacia.div(max(dist, 0.001));
   const horizonte = normalize(vec3(dir.x, max(dir.y, 0.015), dir.z));
@@ -213,6 +214,9 @@ const recorrido = crearRecorrido({
   escena, camara, terreno: piso, choques, calles, estacionados, elJoystick: document.querySelector('#joystick'), lienzo: renderer.domElement,
   inicio: { x: px, z: pz, rumbo: Math.atan2(-(ccx - px), -(ccz - pz)) }, // mirando hacia la Catedral
 });
+// El Dorado, a 14 km: sabana, pistas, terminal y aviones que llegan y salen según la hora.
+const aeropuerto = await crearAeropuerto({ terreno, datos: DATOS });
+escena.add(aeropuerto.grupo);
 // Tráfico: carros, taxis, motos y buses del SITP por sus carriles; cuántos depende de la hora.
 const trafico = crearTrafico({ vias, calles, choques, estacionados, jugador: () => {
   const [x, z] = recorrido.modo === 'libre' ? [controles.target.x, controles.target.z] : recorrido.posicion();
@@ -449,6 +453,7 @@ renderer.setAnimationLoop(() => {
   transmilenio.actualizar(dt, camara);
   peatones.actualizar(dt, Number(control.value), camara);
   trafico.actualizar(dt, Number(control.value), camara);
+  aeropuerto.actualizar(dt, Number(control.value), camara);
   tuberia.render();
 });
 
@@ -457,4 +462,4 @@ await renderer.compileAsync(escena, camara);
 paso('Listo', 10);
 document.querySelector('#carga').classList.add('oculta');
 // Para depurar desde la consola del navegador.
-window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados, farolas, calles, vias, transmilenio, peatones, trafico, arbolesEnPie, exposicion, brillo };
+window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados, farolas, calles, vias, transmilenio, peatones, trafico, aeropuerto, arbolesEnPie, exposicion, brillo };
