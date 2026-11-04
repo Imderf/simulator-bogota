@@ -49,10 +49,11 @@ export function crearCalles(vias, terreno, pisos = []) {
     }
   }
 
-  // ¿El punto está sobre la calzada de alguna vía de carros (con medio metro de gracia)?
-  function dentro(x, z) {
+  // ¿El punto está sobre la calzada de alguna vía de carros? `margen` > 0 da gracia (el carro contra el bordillo);
+  // < 0 exige estar bien adentro (un árbol de alcorque junto al bordillo no cuenta).
+  function dentro(x, z, margen = 0.5) {
     let si = false;
-    recorrer(x, z, 1, (s, d) => { if (s.v.clase <= 4 && d <= s.w + 0.5) si = true; });
+    recorrer(x, z, 1, (s, d) => { if (s.v.clase <= 4 && d <= s.w + margen) si = true; });
     return si;
   }
 

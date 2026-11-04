@@ -262,32 +262,35 @@ function anilloTenis(cx, z, mitad, arriba, suela, n) {
   return puntos;
 }
 
-// Todas las piezas en coordenadas del cuerpo en reposo. Se arman una vez y las comparten todos los personajes.
-let geometrias = null;
-function armarGeometrias() {
-  const fila = (cx, n, ex = 2) => ([y, rx, rzD, rzA, cz]) => anillo(y, rx, rzD, rzA, cz, n, ex, null, cx);
+// Todas las piezas en coordenadas del cuerpo en reposo. Se arman una vez por nivel de detalle y las comparten todos
+// los personajes: 1 es el del jugador; la multitud usa uno con menos puntos por anillo para los de lejos.
+const juegos = {};
+const geometriasDe = (detalle = 1) => (juegos[detalle] ??= armarGeometrias(detalle));
+function armarGeometrias(detalle) {
+  const N = (n) => Math.max(4, Math.round(n * detalle));
+  const fila = (cx, n, ex = 2) => ([y, rx, rzD, rzA, cz]) => anillo(y, rx, rzD, rzA, cz, N(n), ex, null, cx);
   const g = {
-    torso: superficie(TORSO.map(([y, rx, rzD, rzA, cz]) => anillo(y, rx, rzD, rzA, cz, 20, y > 1.5 ? 2 : y > 1.0 ? 2.35 : 2.15)), PARTE.torso, true, true),
+    torso: superficie(TORSO.map(([y, rx, rzD, rzA, cz]) => anillo(y, rx, rzD, rzA, cz, N(20), y > 1.5 ? 2 : y > 1.0 ? 2.35 : 2.15)), PARTE.torso, true, true),
     cabeza: mergeGeometries([
-      superficie(CABEZA.map(([y, rx, rzD, rzA, cz]) => anillo(y, rx, rzD, rzA, cz, 20, 2, relieveCara(y))), PARTE.cabeza, true, true),
-      superficie([0.04, 0.22, 0.45, 0.68, 0.86, 1].map((f) => anilloPelo(f, 0.014, 20)), PARTE.pelo, true),
+      superficie(CABEZA.map(([y, rx, rzD, rzA, cz]) => anillo(y, rx, rzD, rzA, cz, N(20), 2, relieveCara(y))), PARTE.cabeza, true, true),
+      superficie([0.04, 0.22, 0.45, 0.68, 0.86, 1].map((f) => anilloPelo(f, 0.014, N(20))), PARTE.pelo, true),
     ]),
     brazo: [], antebrazo: [], muslo: [], canilla: [], tenis: [],
   };
   for (const s of LADOS) {
     g.muslo.push(superficie(MUSLO_PERFIL.map(fila(s * 0.09, 12)), PARTE.pierna, true, true));
     g.canilla.push(superficie(CANILLA_PERFIL.map(fila(s * 0.09, 12)), PARTE.pierna, true, true));
-    g.tenis.push(superficie(TENIS.map(([z, m, arriba, suela]) => anilloTenis(s * 0.09, z, m, arriba, suela, 12)), PARTE.zapato, true, true));
+    g.tenis.push(superficie(TENIS.map(([z, m, arriba, suela]) => anilloTenis(s * 0.09, z, m, arriba, suela, N(12))), PARTE.zapato, true, true));
 
     const h = hombroDe(s), giro = s * GIRO_MANO;
-    const manga = ([d, rx, rz, ox, oz]) => anillo(h.y - d, rx * 1.06, rz * 1.06, rz * 1.06, h.z - oz, 10, 2, null, h.x + s * ox);
+    const manga = ([d, rx, rz, ox, oz]) => anillo(h.y - d, rx * 1.06, rz * 1.06, rz * 1.06, h.z - oz, N(10), 2, null, h.x + s * ox);
     // Gira un anillo alrededor del eje vertical que pasa por (x, z).
     const girar = (puntos, x, z, angulo) => puntos.map((p) => p.sub(_costura.set(x, 0, z)).applyAxisAngle(THREE.Object3D.DEFAULT_UP, angulo).add(_costura));
-    const mano = MANO.map(([d, grueso, ancho, oz]) => girar(anillo(h.y - d, grueso, ancho, ancho, h.z - oz, 8, 2, null, h.x), h.x, h.z - oz, giro));
+    const mano = MANO.map(([d, grueso, ancho, oz]) => girar(anillo(h.y - d, grueso, ancho, ancho, h.z - oz, N(8), 2, null, h.x), h.x, h.z - oz, giro));
     // Pulgar, por el borde delantero de la palma girada.
     const pulgar = [[0.565, 0.026, 0.011], [0.605, 0.038, 0.0105], [0.64, 0.044, 0.008]].map(([d, oz, r]) => {
       const o = new THREE.Vector3(-s * 0.006, 0, -oz).applyAxisAngle(THREE.Object3D.DEFAULT_UP, giro);
-      return anillo(h.y - d, r, r, r, h.z + o.z, 6, 2, null, h.x + o.x);
+      return anillo(h.y - d, r, r, r, h.z + o.z, N(6), 2, null, h.x + o.x);
     });
     g.brazo.push(superficie(MANGA_ARRIBA.map(manga), PARTE.manga, true, true));
     g.antebrazo.push(mergeGeometries([
@@ -301,12 +304,13 @@ function armarGeometrias() {
 
 // ---------------------------------------------------------------------------------------------------------------
 // Material: un color por pieza y los detalles pintados en el shader con la posición en reposo (cremallera, cuello,
-// bolsillos, costuras, jean gastado, cordones, ojos, cejas y boca). Sin texturas.
+// bolsillos, costuras, jean gastado, cordones, ojos, cejas y boca). Sin texturas. Cada color puede ser un número o un
+// nodo TSL: la multitud pasa nodos que leen el color de cada instancia.
 // ---------------------------------------------------------------------------------------------------------------
 function crearMaterial(c) {
   const material = new THREE.MeshStandardNodeMaterial({ metalness: 0 });
   const q = positionGeometry, n = normalGeometry, parte = attribute('parte', 'float');
-  const [piel, pelo, chaqueta, jean, tenis] = ['piel', 'pelo', 'chaqueta', 'pantalon', 'zapatos'].map((k) => color(new THREE.Color(c[k])));
+  const [piel, pelo, chaqueta, jean, tenis] = ['piel', 'pelo', 'chaqueta', 'pantalon', 'zapatos'].map((k) => (c[k]?.isNode ? c[k] : color(new THREE.Color(c[k]))));
   const linea = (x, ancho) => smoothstep(ancho, ancho * 0.4, abs(x)); // 1 sobre una línea fina en x = 0
 
   material.colorNode = Fn(() => {
@@ -399,8 +403,23 @@ const _origen = new THREE.Vector3(), _meta = new THREE.Vector3(), _polo = new TH
 const _bola = new THREE.Vector3(), _qPie = new THREE.Quaternion(), EJE_X = new THREE.Vector3(1, 0, 0);
 
 export function crearPersonaje(opciones = {}) {
-  const geos = (geometrias ??= armarGeometrias());
-  const material = crearMaterial({ ...COLORES, ...opciones });
+  const { raiz, animar, pedalear, pararse } = armarCuerpo(crearMaterial({ ...COLORES, ...opciones }));
+  return { raiz, animar, pedalear, pararse };
+}
+
+// Para la multitud (js/peatones.js): el mismo esqueleto sin mallas, que solo anota cada pieza con su pivote y su punto
+// de articulación en reposo; la malla instanciada de esa pieza va con la matriz pivote.matrixWorld · T(-punto).
+export const crearEsqueleto = () => armarCuerpo(null);
+// Geometrías en el orden de esqueleto.piezas: torso, cabeza, pierna izquierda (muslo, canilla, tenis), derecha,
+// brazo izquierdo (brazo, antebrazo con mano), derecho.
+export function geometriasPiezas(detalle = 1) {
+  const g = geometriasDe(detalle);
+  return [g.torso, g.cabeza, ...[0, 1].flatMap((i) => [g.muslo[i], g.canilla[i], g.tenis[i]]), ...[0, 1].flatMap((i) => [g.brazo[i], g.antebrazo[i]])];
+}
+export { crearMaterial as materialPersonaje, anillo, superficie };
+
+function armarCuerpo(material) {
+  const geos = geometriasDe();
   const raiz = new THREE.Group();
   raiz.name = 'Personaje';
   const cuerpo = new THREE.Group();
@@ -409,12 +428,14 @@ export function crearPersonaje(opciones = {}) {
 
   // Cada pivote va en su articulación y la malla adentro se corre al revés: la geometría queda en coordenadas del
   // cuerpo en reposo, que es lo que usa el shader para los detalles.
+  const piezas = [];
   const pivote = (padre, punto, puntoPadre, geo, nombre) => {
     const g = new THREE.Group();
     g.name = nombre;
     g.position.subVectors(punto, puntoPadre);
     padre.add(g);
-    if (geo) {
+    if (geo) piezas.push({ pivote: g, punto: punto.clone() });
+    if (geo && material) {
       const m = new THREE.Mesh(geo, material);
       m.position.copy(punto).negate();
       m.castShadow = true;
@@ -507,5 +528,5 @@ export function crearPersonaje(opciones = {}) {
 
   const pararse = () => animar(0, 0);
   pararse();
-  return { raiz, animar, pedalear, pararse };
+  return { raiz, animar, pedalear, pararse, piezas, cadera, cabeza, brazos };
 }

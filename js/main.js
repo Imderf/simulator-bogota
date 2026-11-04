@@ -24,6 +24,8 @@ import { crearCalles } from './calles.js';
 import { crearMinimapa } from './minimapa.js';
 import { crearSonido } from './sonido.js';
 import { crearTransMilenio } from './transmilenio.js';
+import { crearPeatones } from './peatones.js';
+import { crearTrafico } from './trafico.js';
 
 const DATOS = `./datos/${ZONA.nombre}/`;
 const barra = document.querySelector('#carga-barra'), textoCarga = document.querySelector('#carga-texto');
@@ -123,6 +125,11 @@ paso('Armando los lugares', 10);
 await respirar();
 // Los lugares van primero: pueden aplanar el terreno bajo sus plantas antes de armar la malla.
 const lugares = construirLugares(lugaresDatos, terreno, edificios);
+const calles = crearCalles(vias, terreno, lugares.pisos ?? []);
+// Lo que se apoya en el suelo (carros, personas, postes) usa el piso de las calles, no el del terreno.
+const piso = { altura: calles.piso };
+// Árboles del censo que caen dentro de una calzada (la vía de OpenStreetMap es más ancha que la real ahí): fuera.
+const arbolesEnPie = arboles.filter((a) => !calles.dentro(a.x, a.z, -0.3));
 escena.add(lugares.grupo);
 
 const tex = texturaSuelo(suelo, cajaSuelo);
@@ -138,7 +145,7 @@ escena.add(mallasEdificios(edificios, terreno, lugares.excluir).grupo);
 paso('Plantando árboles', 15);
 await respirar();
 // Los árboles cercanos (con hojas) se rehacen alrededor de la cámara; los lejanos son una versión lisa.
-const bosque = mallasArboles(arboles, terreno, (a) => lugares.excluir({ cx: a.x, cz: a.z }));
+const bosque = mallasArboles(arbolesEnPie, terreno, (a) => lugares.excluir({ cx: a.x, cz: a.z }));
 escena.add(bosque);
 escena.add(mallaVias(vias, terreno));
 paso('Preparando la vista', 10);
@@ -184,12 +191,9 @@ const muros = edificios.filter((e) => !lugares.excluir(e)).map((e) => {
 });
 for (const anillo of lugares.solidos) muros.push({ anillo, techo: Infinity });
 // Troncos de los árboles de más de 3 m; los arbustos no estorban.
-const troncos = arboles.filter((a) => a.forma !== 4 && a.alt >= 3).map((a) => [a.x, a.z, a.alt > 12 ? 0.35 : 0.22]);
+const troncos = arbolesEnPie.filter((a) => a.forma !== 4 && a.alt >= 3).map((a) => [a.x, a.z, a.alt > 12 ? 0.35 : 0.22]);
 const choques = crearChoques(muros, troncos);
 // Carros estacionados en calles secundarias y locales alrededor de la plaza; también suman a los choques.
-const calles = crearCalles(vias, terreno, lugares.pisos ?? []);
-// Lo que se apoya en el suelo (carros, personas, postes) usa el piso de las calles, no el del terreno.
-const piso = { altura: calles.piso };
 const estacionados = estacionar({ vias, terreno: piso, choques, centro: lugares.centroPlaza });
 escena.add(estacionados.grupo);
 const farolas = crearFarolas({ vias, terreno: piso, choques, excluir: lugares.excluir });
@@ -197,6 +201,9 @@ escena.add(farolas.grupo);
 // TransMilenio: buses articulados por los carriles exclusivos y estaciones en el separador.
 transmilenio = await crearTransMilenio({ vias, terreno: piso, datos: DATOS });
 escena.add(transmilenio.grupo);
+// Gente caminando por andenes, la Séptima y la plaza; cuánta depende de la hora.
+const peatones = crearPeatones({ vias, calles, choques, lugares });
+escena.add(peatones.grupo);
 // 1 dentro de una estación, 0 a más de 60 m: para el pitido de puertas y el frenado de los buses.
 const cercaEstacion = (x, z) => Math.max(0, ...transmilenio.vagones.map((v) => 1 - Math.hypot(v.x - x, v.z - z) / 60));
 const [px, pz] = [lugares.centroPlaza[0] + 14, lugares.centroPlaza[1] + 14];
@@ -206,6 +213,12 @@ const recorrido = crearRecorrido({
   escena, camara, terreno: piso, choques, calles, estacionados, elJoystick: document.querySelector('#joystick'), lienzo: renderer.domElement,
   inicio: { x: px, z: pz, rumbo: Math.atan2(-(ccx - px), -(ccz - pz)) }, // mirando hacia la Catedral
 });
+// Tráfico: carros, taxis, motos y buses del SITP por sus carriles; cuántos depende de la hora.
+const trafico = crearTrafico({ vias, calles, choques, estacionados, jugador: () => {
+  const [x, z] = recorrido.modo === 'libre' ? [controles.target.x, controles.target.z] : recorrido.posicion();
+  return { x, z, modo: recorrido.modo };
+} });
+escena.add(trafico.grupo);
 // Minimapa tipo GPS abajo a la izquierda, con las placas de las dos calles más cercanas.
 // Con clic o M se abre el Atlas de Bogotá: buscador, zoom y clic para aparecer en ese punto.
 minimapa = await crearMinimapa({
@@ -434,6 +447,8 @@ renderer.setAnimationLoop(() => {
   farolas.actualizar(camara);
   bosque.userData.actualizar?.(camara);
   transmilenio.actualizar(dt, camara);
+  peatones.actualizar(dt, Number(control.value), camara);
+  trafico.actualizar(dt, Number(control.value), camara);
   tuberia.render();
 });
 
@@ -442,4 +457,4 @@ await renderer.compileAsync(escena, camara);
 paso('Listo', 10);
 document.querySelector('#carga').classList.add('oculta');
 // Para depurar desde la consola del navegador.
-window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados, farolas, calles, vias, transmilenio, exposicion, brillo };
+window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados, farolas, calles, vias, transmilenio, peatones, trafico, arbolesEnPie, exposicion, brillo };
