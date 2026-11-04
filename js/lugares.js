@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   attribute, fract, step, floor, hash, mix, vec3, float, uniform, sin, abs, smoothstep, max, min, positionWorld, time,
+  clamp, exp, normalWorld, mx_noise_float,
 } from 'three/tsl';
 import { noche } from './edificios.js';
 
@@ -98,9 +99,10 @@ class Obra {
     this.prisma(material, p, y0, y1);
   }
 
-  // Sólido de revolución (cúpulas, linternas, agujas) con su perfil [radio, altura].
-  torno(material, [x, z], perfil, lados = 16) {
-    const g = new THREE.LatheGeometry(perfil.map(([r, y]) => new THREE.Vector2(r, y)), lados).toNonIndexed();
+  // Sólido de revolución (cúpulas, linternas, agujas) con su perfil [radio, altura]. `fase` gira las esquinas
+  // cuando tiene pocos lados (un torno de 4 lados es una pirámide cuadrada).
+  torno(material, [x, z], perfil, lados = 16, fase = 0) {
+    const g = new THREE.LatheGeometry(perfil.map(([r, y]) => new THREE.Vector2(r, y)), lados, fase).toNonIndexed();
     g.translate(x, 0, z);
     const p = g.attributes.position, fac = new Float32Array(p.count * 2);
     for (let i = 0; i < p.count; i++) { fac[i * 2] = Math.atan2(p.getZ(i) - z, p.getX(i) - x) * 4; fac[i * 2 + 1] = p.getY(i); }
@@ -148,6 +150,11 @@ class Obra {
     return {
       L, normal, largo: lado.eje === 'u' ? r.mw : r.mu,
       punto: (a, b) => r.punto(...L(a, b)),
+      // Lo contrario de punto(): [a, b] de un punto del mundo.
+      ab: ([x, z]) => {
+        const dx = x - r.cx, dz = z - r.cz, u = dx * r.c + dz * r.s, w = -dx * r.s + dz * r.c;
+        return lado.eje === 'u' ? [w, (u - f) * lado.signo] : [u, (w - f) * lado.signo];
+      },
       // Pieza rectangular pegada al frente: ancho a lo largo, fondo hacia afuera.
       panel: (material, a, b, ancho, fondo, y0, y1) => {
         const [u, w] = L(a, b);
@@ -176,6 +183,224 @@ function geometria(pos, fac) {
   g.computeVertexNormals();
   return g;
 }
+
+// Talla un entrante rectangular en el frente de una planta (pórticos): de a0 a a1 a lo largo del frente y `fondo`
+// metros hacia adentro. Si no encuentra el muro del frente, devuelve la planta igual.
+function entallar(anillo, F, a0, a1, fondo) {
+  for (let i = 0; i < anillo.length; i++) {
+    const p = anillo[i], q = anillo[(i + 1) % anillo.length], [ap, bp] = F.ab(p), [aq, bq] = F.ab(q);
+    if (Math.abs(bp) > 2 || Math.abs(bq) > 2 || Math.min(ap, aq) > a0 || Math.max(ap, aq) < a1) continue;
+    const b = (a) => bp + ((bq - bp) * (a - ap)) / (aq - ap);
+    const [c, d] = ap < aq ? [a0, a1] : [a1, a0];
+    return [...anillo.slice(0, i + 1), F.punto(c, b(c)), F.punto(c, -fondo), F.punto(d, -fondo), F.punto(d, b(d)), ...anillo.slice(i + 1)];
+  }
+  return anillo;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Superficies suaves para la estatua: filas de puntos unidas con normales promediadas (como el personaje).
+// ---------------------------------------------------------------------------------------------------------------
+const P = (x, y, z) => new THREE.Vector3(x, y, z);
+const suave = (x) => { const k = Math.min(1, Math.max(0, x)); return k * k * (3 - 2 * k); };
+const lobulo = (a, a0, ancho) => { let d = a - a0; d -= Math.round(d / (Math.PI * 2)) * Math.PI * 2; return Math.exp(-(d * d) / (ancho * ancho)); };
+const azar = (k) => { const s = Math.sin(k * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
+
+function geometriaSuave(pos, idx) {
+  const g = new THREE.BufferGeometry();
+  g.setIndex(idx);
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+// Une filas de puntos: cerradas (anillos) o abiertas. Las caras miran hacia afuera cuando cada fila gira a
+// izquierdas alrededor del sentido en que avanzan las filas.
+function unir(filas, cerrada) {
+  const n = filas[0].length, pos = [], idx = [];
+  for (const f of filas) for (const p of f) pos.push(p.x, p.y, p.z);
+  for (let i = 0; i < filas.length - 1; i++) for (let j = 0; j < (cerrada ? n : n - 1); j++) {
+    const a = i * n + j, b = i * n + ((j + 1) % n);
+    idx.push(a, a + n, b, b, a + n, b + n);
+  }
+  return { pos, idx };
+}
+
+// Tubo por los puntos de `eje`: en cada uno, un anillo superelíptico perpendicular al eje con radios [de lado,
+// adelante, atrás] (o un número). En un eje vertical a = π/2 es el frente (+z). `bulto(a, i)` empuja el anillo i.
+// Las tapas llevan vértices propios para no redondear el borde del tubo.
+function tubo(eje, radios, n = 12, { ex = 2, bulto = null, tapas = true } = {}) {
+  const t = P(0, 0, 0), lado = P(0, 0, 0), frente = P(0, 0, 0), arriba = P(0, 1, 0), adelante = P(0, 0, 1);
+  const filas = eje.map((c, i) => {
+    t.subVectors(eje[Math.min(i + 1, eje.length - 1)], eje[Math.max(i - 1, 0)]).normalize();
+    lado.crossVectors(t, Math.abs(t.z) > 0.8 ? arriba : adelante).normalize();
+    frente.crossVectors(lado, t);
+    const r = radios[i], [rx, rd, ra] = typeof r === 'number' ? [r, r, r] : r;
+    return Array.from({ length: n }, (_, j) => {
+      const a = (j / n) * Math.PI * 2, co = Math.cos(a), si = Math.sin(a), b = bulto ? bulto(a, i) : 0;
+      return c.clone()
+        .addScaledVector(lado, Math.sign(co) * Math.abs(co) ** (2 / ex) * (rx + b))
+        .addScaledVector(frente, Math.sign(si) * Math.abs(si) ** (2 / ex) * ((si >= 0 ? rd : ra) + b));
+    });
+  });
+  const { pos, idx } = unir(filas, true);
+  if (tapas) for (const k of [0, filas.length - 1]) {
+    const ini = pos.length / 3, centro = P(0, 0, 0);
+    for (const p of filas[k]) { pos.push(p.x, p.y, p.z); centro.add(p); }
+    centro.divideScalar(n);
+    pos.push(centro.x, centro.y, centro.z);
+    for (let j = 0; j < n; j++) {
+      const a = ini + j, b = ini + ((j + 1) % n), c = ini + n;
+      idx.push(...(k === 0 ? [c, a, b] : [c, b, a]));
+    }
+  }
+  return geometriaSuave(pos, idx);
+}
+
+// Lámina abierta (el manto): f(t, s) con t de arriba (0) a abajo (1) y s girando a izquierdas. Se recorre de abajo
+// hacia arriba para que las caras miren hacia afuera.
+function lamina(f, filas, columnas) {
+  const grilla = [];
+  for (let i = filas; i >= 0; i--) grilla.push(Array.from({ length: columnas + 1 }, (_, j) => f(i / filas, j / columnas)));
+  const { pos, idx } = unir(grilla, false);
+  return geometriaSuave(pos, idx);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Estatua de Bolívar (Pietro Tenerani, 1846), en el cuerpo de una persona de 1,75 m que mira a +z con los pies en
+// y = 0 y su izquierda en +x. Pose según las fotos de Commons: casaca larga con charretera y botas altas, el manto
+// sobre el hombro izquierdo que baja por la espalda y cruza adelante a la cintura, el rollo de la Constitución en
+// la mano izquierda y la espada hacia el piso en la derecha.
+// ---------------------------------------------------------------------------------------------------------------
+// Casaca: [y, de lado, adelante, atrás, centro z (positivo = adelante)].
+const CASACA = [
+  [1.575, 0.05, 0.048, 0.052, -0.006], // cuello alto
+  [1.545, 0.066, 0.064, 0.068, -0.006],
+  [1.51, 0.085, 0.074, 0.08, -0.01],
+  [1.48, 0.165, 0.09, 0.09, -0.015],
+  [1.445, 0.205, 0.105, 0.095, -0.015], // hombros
+  [1.39, 0.2, 0.12, 0.1, -0.01],
+  [1.3, 0.183, 0.126, 0.1, 0],
+  [1.2, 0.166, 0.118, 0.095, 0.005],
+  [1.1, 0.158, 0.112, 0.094, 0.005], // cintura
+  [1.0, 0.172, 0.116, 0.11, 0],
+  [0.9, 0.19, 0.125, 0.13, -0.005],
+  [0.78, 0.205, 0.135, 0.15, -0.01],
+  [0.66, 0.215, 0.14, 0.165, -0.015], // faldón hasta la rodilla
+  [0.635, 0.19, 0.12, 0.14, -0.015],
+];
+// Cabeza del personaje (js/personaje.js) vuelta hacia +z, con el mismo formato.
+const CABEZA = [
+  [1.752, 0.018, 0.018, 0.02, -0.012],
+  [1.738, 0.056, 0.058, 0.064, -0.013],
+  [1.712, 0.078, 0.082, 0.092, -0.013],
+  [1.682, 0.087, 0.09, 0.102, -0.011],
+  [1.652, 0.088, 0.093, 0.103, -0.009],
+  [1.622, 0.084, 0.094, 0.098, -0.007],
+  [1.592, 0.078, 0.095, 0.09, -0.005],
+  [1.562, 0.071, 0.091, 0.078, -0.002],
+  [1.537, 0.063, 0.085, 0.066, 0.002],
+  [1.514, 0.052, 0.074, 0.054, 0.008],
+  [1.497, 0.03, 0.048, 0.032, 0.016],
+];
+// Nariz, cejas, mentón y orejas, y el pelo crespo con patillas: más volumen arriba, a los lados y atrás.
+function relieve(y, a) {
+  const frente = Math.PI / 2;
+  let b = 0;
+  if (Math.abs(y - 1.592) < 0.02) b += 0.018 * lobulo(a, frente, 0.16);
+  if (Math.abs(y - 1.622) < 0.02) b += 0.008 * lobulo(a, frente, 0.14);
+  if (Math.abs(y - 1.652) < 0.02) b += 0.005 * lobulo(a, frente, 0.6);
+  if (Math.abs(y - 1.514) < 0.012) b += 0.007 * lobulo(a, frente, 0.35);
+  if (y < 1.64 && y > 1.575) b += 0.011 * (lobulo(a, 0, 0.22) + lobulo(a, Math.PI, 0.22));
+  const pelo = y > 1.66 ? 1 : suave((y - 1.56) / 0.1) * (1 - lobulo(a, frente, 1.0));
+  return b + pelo * (0.01 + 0.004 * Math.sin(9 * a + y * 120));
+}
+
+function casacaEn(y) {
+  if (y >= CASACA[0][0]) return CASACA[0].slice(1);
+  for (let i = 0; i < CASACA.length - 1; i++) if (y >= CASACA[i + 1][0]) {
+    const [a, b] = [CASACA[i], CASACA[i + 1]], t = (a[0] - y) / (a[0] - b[0]);
+    return a.slice(1).map((v, k) => v + (b[k + 1] - v) * t);
+  }
+  return CASACA.at(-1).slice(1);
+}
+
+// Punto del manto en el ángulo a (0 = costado izquierdo, π/2 = frente) a la altura y: holgura que crece hacia
+// abajo, el brazo izquierdo debajo y pliegues verticales cada vez más hondos.
+function vueloManto(a, y, t, capa) {
+  const si = Math.sin(a), co = Math.cos(a), [rx, rd, ra, cz] = casacaEn(Math.max(y, 0.66));
+  const brazo = 0.09 * lobulo(a, 0.15, 0.9) * suave((1.47 - y) / 0.1) * suave((y - 1.0) / 0.08);
+  const pliegue = (0.003 + 0.03 * t * t) * (0.6 * Math.sin(7 * a + 0.5) + 0.4 * Math.sin(13 * a + 2));
+  const h = 0.018 + 0.1 * t * t + brazo + pliegue + capa;
+  return P(co * (rx + h), y, cz + si * ((si >= 0 ? rd : ra) + h));
+}
+
+function estatuaBolivar() {
+  const partes = [];
+  const eje = (filas) => filas.map(([y, , , , cz]) => P(0, y, cz)), radios = (filas) => filas.map(([, rx, rd, ra]) => [rx, rd, ra]);
+  partes.push(tubo(eje(CASACA), radios(CASACA), 24, { ex: 2.2 }));
+  // La cabeza mira un poco hacia abajo y a su derecha.
+  const cabeza = tubo(eje(CABEZA), radios(CABEZA), 22, { bulto: (a, i) => relieve(CABEZA[i][0], a) });
+  const pivote = P(0, 1.53, 0);
+  cabeza.applyMatrix4(new THREE.Matrix4().makeTranslation(pivote).multiply(new THREE.Matrix4().makeRotationY(-0.15))
+    .multiply(new THREE.Matrix4().makeRotationX(0.1)).multiply(new THREE.Matrix4().makeTranslation(pivote.clone().negate())));
+  partes.push(cabeza);
+
+  // Piernas con botas altas: la derecha recta (carga el peso) y la izquierda un poco adelante, con la rodilla suelta.
+  const PIERNA = [[0.75, 0.07], [0.6, 0.062], [0.5, 0.057], [0.475, 0.066], [0.445, 0.06], [0.32, 0.056], [0.18, 0.046], [0.09, 0.044]];
+  // Pie: [z desde el tobillo, y, medio ancho, arriba, abajo].
+  const PIE = [[-0.075, 0.05, 0.03, 0.025, 0.04], [-0.035, 0.055, 0.043, 0.045, 0.05], [0.04, 0.052, 0.045, 0.04, 0.047],
+    [0.12, 0.045, 0.044, 0.028, 0.04], [0.18, 0.036, 0.038, 0.018, 0.031], [0.215, 0.03, 0.018, 0.01, 0.022]];
+  for (const [cadera, rodilla, tobillo, giro] of [[[-0.095, -0.005], [-0.095, 0.005], [-0.095, -0.005], -0.12], [[0.1, 0], [0.11, 0.06], [0.125, 0.11], 0.3]]) {
+    const en = (y) => {
+      const [a, b, f] = y > 0.5 ? [rodilla, cadera, (y - 0.5) / 0.25] : [tobillo, rodilla, (y - 0.09) / 0.41];
+      return P(a[0] + (b[0] - a[0]) * f, y, a[1] + (b[1] - a[1]) * f);
+    };
+    partes.push(tubo(PIERNA.map(([y]) => en(y)), PIERNA.map(([, r]) => r), 12));
+    const c = Math.cos(giro), s = Math.sin(giro);
+    partes.push(tubo(PIE.map(([z, y]) => P(tobillo[0] + z * s, y, tobillo[1] + z * c)), PIE.map(([, , an, ar, ab]) => [an, ar, ab]), 10, { ex: 2.4 }));
+  }
+
+  // Brazos: el derecho cuelga con el puño en la empuñadura; el izquierdo baja bajo el manto y cruza el vientre.
+  const MANGA = [0.056, 0.064, 0.06, 0.056, 0.053, 0.05, 0.048, 0.052, 0.034];
+  partes.push(tubo([P(-0.19, 1.47, -0.01), P(-0.215, 1.42, -0.01), P(-0.232, 1.33, -0.015), P(-0.246, 1.24, -0.02), P(-0.256, 1.16, -0.015),
+    P(-0.263, 1.07, 0), P(-0.269, 0.98, 0.025), P(-0.272, 0.935, 0.04), P(-0.274, 0.918, 0.045)], MANGA, 12));
+  partes.push(tubo([P(0.19, 1.47, -0.01), P(0.215, 1.42, -0.01), P(0.235, 1.3, 0), P(0.242, 1.16, 0.02), P(0.215, 1.115, 0.075),
+    P(0.15, 1.105, 0.135), P(0.09, 1.105, 0.18), P(0.055, 1.108, 0.2), P(0.04, 1.11, 0.205)], MANGA, 12));
+  partes.push(tubo([P(-0.275, 0.925, 0.05), P(-0.279, 0.89, 0.06), P(-0.281, 0.85, 0.067), P(-0.282, 0.82, 0.07)],
+    [[0.028, 0.03, 0.03], [0.04, 0.042, 0.04], [0.042, 0.044, 0.042], [0.03, 0.03, 0.03]], 10));
+  partes.push(tubo([P(0.045, 1.125, 0.21), P(-0.01, 1.132, 0.235), P(-0.07, 1.13, 0.243), P(-0.105, 1.12, 0.24)],
+    [[0.03, 0.022, 0.022], [0.042, 0.024, 0.02], [0.04, 0.02, 0.018], [0.022, 0.012, 0.012]], 10));
+  // Rollo de la Constitución, horizontal bajo la mano izquierda.
+  partes.push(tubo([P(-0.2, 1.088, 0.212), P(-0.19, 1.088, 0.212), P(0.15, 1.095, 0.19), P(0.16, 1.095, 0.19)], [0.04, 0.047, 0.047, 0.04], 14));
+
+  // Espada: hoja recta de sección rombo hacia el piso, por delante y afuera del pie derecho; gavilán y pomo.
+  const mano = P(-0.281, 0.86, 0.066), d = P(-0.2, -1, 0.3).normalize(), en = (k) => mano.clone().addScaledVector(d, k);
+  partes.push(tubo([0.06, 0.1, 0.4, 0.75, 0.86].map(en), [[0.016, 0.004, 0.004], [0.016, 0.004, 0.004], [0.013, 0.0035, 0.0035], [0.007, 0.003, 0.003], [0.0015, 0.001, 0.001]], 4, { ex: 1 }));
+  const travesano = P(0, 0, 0).crossVectors(d, P(0, 1, 0)).normalize();
+  partes.push(tubo([-0.07, -0.03, 0.03, 0.07].map((k) => en(0.055).addScaledVector(travesano, k)), [0.006, 0.009, 0.009, 0.006], 6));
+  partes.push(tubo([-0.04, -0.06, -0.085].map(en), [0.012, 0.02, 0.008], 8));
+
+  // Charretera en el hombro derecho, con flecos (el manto tapa la izquierda).
+  partes.push(tubo([P(-0.13, 1.478, -0.01), P(-0.17, 1.476, -0.01), P(-0.215, 1.466, -0.01), P(-0.245, 1.45, -0.01)],
+    [[0.008, 0.045, 0.045], [0.016, 0.062, 0.062], [0.018, 0.072, 0.072], [0.012, 0.064, 0.064]], 12));
+  partes.push(tubo([P(-0.228, 1.46, -0.01), P(-0.231, 1.425, -0.01), P(-0.233, 1.39, -0.01)], [0.07, 0.074, 0.076], 20, { bulto: (a) => 0.005 * Math.cos(a * 10), tapas: false }));
+
+  // Manto: del hombro izquierdo baja por la espalda hasta el piso y cruza adelante a la cintura, recogido bajo el
+  // antebrazo; el borde de adelante cae hasta las canillas. Encima, la vuelta que cuelga del hombro.
+  partes.push(lamina((t, s) => {
+    const k = suave(t / 0.35), a = -2.0 - 0.5 * k + (2.9 + 1.7 * k) * s, si = Math.sin(a);
+    const y0 = 1.49 - 0.04 * Math.abs(si), y1 = 0.04 + 0.26 * Math.max(0, si) ** 0.8;
+    return vueloManto(a, y0 + (y1 - y0) * t, t, 0);
+  }, 22, 34));
+  partes.push(lamina((t, s) => {
+    const a = -1.9 + 2.3 * s;
+    return vueloManto(a, 1.505 - (0.17 * (0.45 + 0.55 * lobulo(a, -0.7, 1.1)) + 0.012 * Math.sin(6 * a)) * t, 0.25 * t, 0.022);
+  }, 5, 18));
+  return partes;
+}
+
+// Faroles de la plaza en el marco de la plaza: [eje fijo, valor, desde, paso, cuántos]. Posiciones aprox.
+const FAROLES = [['u', -49, -36, 12.67, 7], ['u', 58.5, -36, 12.67, 7], ['w', -41.5, -40, 12.86, 8], ['w', 45, -40, 12.86, 8]];
 
 // ---------------------------------------------------------------------------------------------------------------
 // Materiales: piedra arenisca, estuco, ladrillo, teja, vidrio y la fachada de LED de Colpatria. Todo con TSL.
@@ -264,6 +489,49 @@ function vidrioTorre(color) {
   return m;
 }
 
+// Bronce de la estatua: pátina verde oscura donde escurre la lluvia (caras hacia arriba) y en manchas; el metal
+// asoma en lo vertical y refleja el cielo. El manto es una lámina: se ve por los dos lados.
+function bronce() {
+  const ruido = mx_noise_float(positionWorld.mul(2.5)).mul(0.5).add(0.5);
+  const patina = smoothstep(0.3, 0.75, normalWorld.y.mul(0.35).add(ruido.mul(0.6)).add(0.1));
+  const m = new THREE.MeshStandardNodeMaterial({ side: THREE.DoubleSide });
+  m.colorNode = mix(vec3(0.3, 0.2, 0.1), vec3(0.07, 0.12, 0.09), patina);
+  m.metalnessNode = mix(float(0.85), float(0.25), patina);
+  m.roughnessNode = mix(float(0.38), float(0.7), patina);
+  return m;
+}
+
+// Piso de la Plaza de Bolívar en su marco (u, w): losas grises en hiladas con franjas rojizas en cuadrícula (fotos de
+// Commons; medidas aprox.). De noche, el charco de luz de cada farol va pintado en el piso.
+function pisoPlaza(r, lineas) {
+  const dx = positionWorld.x.sub(r.cx), dz = positionWorld.z.sub(r.cz);
+  const u = dx.mul(r.c).add(dz.mul(r.s)), w = dz.mul(r.c).sub(dx.mul(r.s));
+  const fila = floor(u.div(0.6)), ju = fract(w.div(1.2).add(fila.mul(0.5))), jv = fract(u.div(0.6));
+  // De lejos las juntas se funden para no hacer moiré.
+  const lejos = smoothstep(30.0, 120.0, positionWorld.sub(cameraPos).length());
+  const junta = max(step(ju, 0.03), step(jv, 0.05)).mul(float(1).sub(lejos));
+  const tono = hash(floor(w.div(1.2).add(fila.mul(0.5))).add(fila.mul(57.0))).mul(0.1);
+  const franja = (x) => step(abs(fract(x.div(7.5).add(0.5)).sub(0.5)).mul(7.5), 0.22);
+  const gris = vec3(...new THREE.Color(0x8d8a83).toArray()), rojizo = vec3(...new THREE.Color(0x8e5c48).toArray());
+  const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.85 });
+  m.colorNode = mix(gris.mul(float(0.95).add(tono)), rojizo, max(franja(u), franja(w))).mul(float(1).sub(junta.mul(0.25)));
+  let charco = float(0);
+  for (const [eje, valor, desde, paso, n] of lineas) {
+    const [a, b] = eje === 'u' ? [w, u] : [u, w];
+    const da = a.sub(clamp(floor(a.sub(desde).div(paso).add(0.5)), 0, n - 1).mul(paso).add(desde)), db = b.sub(valor);
+    charco = max(charco, exp(da.mul(da).add(db.mul(db)).mul(-1 / 16)));
+  }
+  m.emissiveNode = vec3(1.0, 0.78, 0.5).mul(charco).mul(noche).mul(0.55);
+  return m;
+}
+
+// Vidrio de los faroles: claro de día y encendido de noche, por encima del umbral del bloom.
+function vidrioFarol() {
+  const m = new THREE.MeshStandardNodeMaterial({ color: 0xe9dcc0, roughness: 0.35 });
+  m.emissiveNode = vec3(1.0, 0.82, 0.55).mul(noche.mul(3.4));
+  return m;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Los lugares.
 // ---------------------------------------------------------------------------------------------------------------
@@ -290,7 +558,6 @@ export function construirLugares(datos, terreno, edificios) {
     pizarra: plano(0x55585c, { roughness: 0.6, metalness: 0.2 }),
     cupulaGris: plano(0x8f8a7e, { roughness: 0.7 }),
     bronce: plano(0x4a3c2a, { roughness: 0.4, metalness: 0.7 }),
-    adoquin: piedra(0x9c9284, { bloque: [0.9, 0.9] }),
     arena: plano(0xc9a874),
     colpatria: colpatria(192),
     vidrioAzul: vidrioTorre(0x7f98b0),
@@ -301,6 +568,11 @@ export function construirLugares(datos, terreno, edificios) {
     sombra: plano(0x2a2622, { roughness: 1 }),
     reloj: plano(0xf2efe6, { roughness: 0.5 }),
     balaustrada: balaustrada(0xcdb88e),
+    bronceEstatua: bronce(),
+    pedestal: piedra(0xcabf9f, { bloque: [2.2, 1.0] }),
+    piedraClara: piedra(0xd8ceb4, { bloque: [1.6, 0.8] }),
+    hierro: plano(0x1d1f22, { roughness: 0.5, metalness: 0.5 }),
+    farol: vidrioFarol(),
   };
 
   const excluir = [];
@@ -315,45 +587,115 @@ export function construirLugares(datos, terreno, edificios) {
     centroPlaza[0] += r.cx / 4; centroPlaza[1] += r.cz / 4;
   }
   const yPlaza = suelo(...centroPlaza);
+  // Marco de la plaza alineado con el Capitolio: u hacia el sur (Capitolio), w hacia el occidente (Liévano).
+  const plaza = { ...capitolio, cx: centroPlaza[0], cz: centroPlaza[1] };
+  plaza.punto = (u, w) => [plaza.cx + u * plaza.c - w * plaza.s, plaza.cz + u * plaza.s + w * plaza.c];
+  // pisos: superficies caminables elevadas ({ anillo, y }); despejar: zonas sin farolas, árboles ni edificios del
+  // catastro, pero sin choques; extras y reflectores se agregan al grupo al final.
+  const pisos = [], despejar = [], extras = [], reflectores = [];
+  let pedestal = null;
   {
-    const yp = yPlaza;
+    const yp = yPlaza, r = plaza;
+    const cuadro = (u0, u1, w0, w1) => [r.punto(u0, w0), r.punto(u1, w0), r.punto(u1, w1), r.punto(u0, w1)];
     // La plaza es plana: se aplana el terreno del cuadrado y sus andenes.
-    const rp = { ...capitolio, cx: centroPlaza[0], cz: centroPlaza[1] };
-    rp.punto = (u, w) => [rp.cx + u * rp.c - w * rp.s, rp.cz + u * rp.s + w * rp.c];
-    terreno.aplanar([rp.punto(-64, -64), rp.punto(64, -64), rp.punto(64, 64), rp.punto(-64, 64)], yp, 40);
-    // Marco de la plaza alineado con el Capitolio. Unos 13.900 m² con las calles (es.wiki): ~105 m de lado sin ellas (aprox.).
-    const r = { ...capitolio, cx: centroPlaza[0], cz: centroPlaza[1] };
-    r.punto = (u, w) => [r.cx + u * r.c - w * r.s, r.cz + u * r.s + w * r.c];
-    obra.caja(M.adoquin, r, 0, 0, 52, 52, yp - 2, yp + 0.25);
-    // Estatua de Bolívar (Tenerani, 1846) sobre su pedestal de 1927. Medidas aprox.
-    obra.caja(M.areniscaOscura, r, 0, 0, 2.4, 2.4, yp, yp + 1.2);
-    obra.caja(M.arenisca, r, 0, 0, 1.4, 1.4, yp + 1.2, yp + 5.2);
-    obra.cilindro(M.bronce, centroPlaza, 0.45, yp + 5.2, yp + 6.6, 10);
-    obra.torno(M.bronce, centroPlaza, [[0, 6.6], [0.42, 6.65], [0.3, 7.5], [0.22, 7.9], [0, 8.0]].map(([a, b]) => [a, yp + b]), 10);
+    terreno.aplanar(cuadro(-64, 64, -64, 64), yp, 40);
+    // Piso: una losa de fachada a fachada que tapa las calles peatonales (Calles 10 y 11, Carrera 7; la Carrera 8
+    // queda afuera, con su calzada), un escalón y la plaza. La plaza de OSM (relation/13663349) mide ~100 × 80 m;
+    // aquí sin el chaflán de su esquina. Unos 13.900 m² con las calles (es.wiki). Alturas de escalones aprox.
+    M.pisoPlaza = pisoPlaza(r, FAROLES);
+    const losa = (anillo, y0, y1, mat = M.pisoPlaza) => { obra.prisma(mat, anillo, y0, y1); pisos.push({ anillo, y: y1 }); };
+    const zona = cuadro(-63, 71, -58, 46.5), ySq = yp + 0.85;
+    losa(zona, yp - 2, yp + 0.55);
+    losa([[-45.7, -37.2], [54.7, -38.7], [55.7, 41.7], [-44.7, 42.7]].map(([u, w]) => r.punto(u, w)), yp + 0.55, yp + 0.7);
+    losa([[-45, -36.5], [54, -38], [55, 41], [-44, 42]].map(([u, w]) => r.punto(u, w)), yp + 0.7, ySq);
+    despejar.push(zona);
+
+    // Monumento a Bolívar sobre una plataforma de 14 × 14 m con escalón: el hueco del polígono de la plaza en OSM,
+    // 20 m al sur del centro (ahí está también el nodo de la estatua, node/14135823651).
+    const [U, W] = [19, -4], yPla = ySq + 0.7;
+    losa(cuadro(U - 7.6, U + 7.6, W - 7.6, W + 7.6), ySq, ySq + 0.35, M.pedestal);
+    losa(cuadro(U - 7, U + 7, W - 7, W + 7), ySq + 0.35, yPla, M.pedestal);
+    // Pedestal de piedra clara (el de 1927, más alto que el de 1880): zócalo, fuste con placas de bronce en tres caras
+    // y BOLIVAR en la del frente, cornisa y remate en gola. Proporciones tomadas de las fotos de Commons, aprox.
+    obra.caja(M.pedestal, r, U, W, 1.35, 1.35, yPla, yPla + 0.5);
+    obra.caja(M.pedestal, r, U, W, 1.05, 1.05, yPla + 0.5, yPla + 3.5);
+    obra.caja(M.pedestal, r, U, W, 1.18, 1.18, yPla + 3.5, yPla + 3.65);
+    // La gola es un torno de 4 lados con las esquinas en las diagonales de la plaza.
+    const fase = Math.atan2(r.c - r.s, r.s + r.c);
+    obra.torno(M.pedestal, r.punto(U, W), [[1.12, 0], [0.98, 0.06], [0.84, 0.17], [0.74, 0.3], [0.7, 0.42], [0, 0.42]].map(([m, y]) => [m * Math.SQRT2, yPla + 3.65 + y]), 4, fase);
+    obra.caja(M.bronce, r, U, W, 0.62, 0.62, yPla + 4.07, yPla + 4.17);
+    for (const [du, dw] of [[0, -1.08], [0, 1.08], [1.08, 0]]) obra.caja(M.bronce, r, U + du, W + dw, du ? 0.03 : 0.6, du ? 0.6 : 0.03, yPla + 1.3, yPla + 2.7);
+    for (let i = 0; i < 7; i++) obra.caja(M.sombra, r, U - 1.06, W + (i - 3) * 0.2, 0.012, 0.065, yPla + 1.75, yPla + 2.02);
+    pedestal = cuadro(U - 1.35, U + 1.35, W - 1.35, W + 1.35);
+    // La figura: 2,45 m (aprox.), mirando al norte, hacia el Palacio de Justicia, como quedó en 1880 (es.wiki).
+    const k = 2.45 / 1.75, [x, z] = r.punto(U, W);
+    const matriz = new THREE.Matrix4().compose(new THREE.Vector3(x, yPla + 4.17, z),
+      new THREE.Quaternion().setFromAxisAngle(THREE.Object3D.DEFAULT_UP, Math.atan2(-r.c, -r.s)), new THREE.Vector3(k, k, k));
+    for (const g of estatuaBolivar()) obra.agregar(M.bronceEstatua, g.applyMatrix4(matriz));
+
+    // Faroles negros con farol de seis caras alrededor de la plaza y bolardos contra la Carrera 8 (fotos de Commons;
+    // posiciones aprox.).
+    for (const [eje, valor, desde, paso, n] of FAROLES) for (let i = 0; i < n; i++) {
+      const p = eje === 'u' ? r.punto(valor, desde + i * paso) : r.punto(desde + i * paso, valor), y = yp + 0.55;
+      obra.torno(M.hierro, p, [[0.17, 0], [0.17, 0.35], [0.1, 0.48], [0.06, 0.65], [0.05, 3.55], [0.09, 3.65], [0.08, 3.78]].map(([a, b]) => [a, y + b]), 6);
+      obra.torno(M.farol, p, [[0.09, 3.78], [0.2, 3.92], [0.22, 4.28], [0, 4.28]].map(([a, b]) => [a, y + b]), 6);
+      obra.torno(M.hierro, p, [[0.27, 4.28], [0.13, 4.46], [0.03, 4.6], [0, 4.75]].map(([a, b]) => [a, y + b]), 6);
+    }
+    for (let u = -60; u <= 68; u += 2.6) obra.torno(M.hierro, r.punto(u, 46.2), [[0.1, 0], [0.1, 0.62], [0.07, 0.78], [0, 0.84]].map(([a, b]) => [a, yp + 0.55 + b]), 6);
+
+    // De noche: reflectores al pie de las fachadas y dos sobre la estatua (posiciones aprox.). La intensidad sale de
+    // la distancia (caída 1,5) para que todo reciba más o menos la misma luz.
+    const reflector = ([u, w, y], [tu, tw, ty], luz, angulo) => {
+      const l = new THREE.SpotLight(0xffe2b8, 0, 0, angulo, 0.55, 1.5), [x0, z0] = r.punto(u, w), [x1, z1] = r.punto(tu, tw);
+      l.position.set(x0, y + 0.45, z0);
+      l.target.position.set(x1, ty, z1);
+      const d = l.position.distanceTo(l.target.position);
+      l.distance = d * 2.2;
+      extras.push(l, l.target);
+      reflectores.push([l, luz * d ** 1.5]);
+      obra.caja(M.hierro, r, u, w, 0.25, 0.25, y, y + 0.35);
+    };
+    reflector([-10.8, -30, ySq], [-10.8, -58, yp + 20], 5.5, 0.8); // Catedral
+    reflector([34, -1.9, ySq], [71, -1.9, yp + 10], 5.5, 0.9); // Capitolio
+    reflector([1.7, 24, ySq], [1.7, 57, yp + 9], 5.5, 1.0); // Liévano
+    reflector([-30, 0.5, ySq], [-63, 0.5, yp + 9], 5.5, 0.95); // Palacio de Justicia
+    for (const t of [-1, 1]) reflector([U - 6.6, W + t * 6.6, yPla], [U, W, yPla + 5.3], 16, 0.3);
+
+    // Palomas: instancias sencillas, más juntas cerca del monumento.
+    const pisoEn = (x, z) => pisos.reduce((y, p) => (adentro([x, z], p.anillo) ? Math.max(y, p.y) : y), yp);
+    const paloma = mergeGeometries([
+      new THREE.OctahedronGeometry(1, 0).scale(0.085, 0.07, 0.16).translate(0, 0.08, 0),
+      new THREE.OctahedronGeometry(1, 0).scale(0.04, 0.045, 0.05).translate(0, 0.16, 0.12),
+    ]);
+    const palomas = new THREE.InstancedMesh(paloma, new THREE.MeshStandardNodeMaterial({ roughness: 0.9 }), 150);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), pos = new THREE.Vector3(), escala = new THREE.Vector3(), color = new THREE.Color();
+    for (let i = 0; i < palomas.count; i++) {
+      let u = -42 + 94 * azar(i * 5 + 3), w = -34 + 72 * azar(i * 5 + 4);
+      if (i % 3) { const rad = 9 + 10 * Math.sqrt(azar(i * 3 + 1)), ang = azar(i * 3 + 2) * Math.PI * 2; u = U + Math.cos(ang) * rad; w = W + Math.sin(ang) * rad; }
+      const [x, z] = r.punto(u, w);
+      palomas.setMatrixAt(i, m4.compose(pos.set(x, pisoEn(x, z), z), q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, azar(i * 7) * 6.3), escala.setScalar(0.85 + 0.3 * azar(i * 11))));
+      palomas.setColorAt(i, azar(i * 13) < 0.08 ? color.set(0xd8d6d0) : color.setHSL(0.62, 0.08, 0.3 + 0.25 * azar(i * 17)));
+    }
+    palomas.computeBoundingSphere();
+    palomas.name = 'Palomas';
+    extras.push(palomas);
   }
 
-  // --- Capitolio Nacional: piedra rubia, dos pisos sobre un basamento, balaustrada y pórtico jónico
-  // de "seis filas de tres columnas" (es.wiki). Alturas aprox. según las fotos de Commons.
+  // --- Capitolio Nacional: piedra de cantería, dos pisos sobre un basamento y balaustrada. Al centro, "un cuerpo
+  // central transparente a manera de pórtico" con "seis filas de tres columnas" jónicas (es.wiki): la columnata va
+  // metida en el frente, no saliente (foto de Commons de 2009), y detrás queda el patio Mosquera. Alturas aprox.
   {
     const { anillos: [planta], huecos } = plantas.capitolio;
     const y0 = explanada(planta, yPlaza) // al nivel de la plaza;
+    const r = capitolio, F = obra.frente(r, r.ladoHacia(centroPlaza));
+    // El pórtico se talla en la planta: 29 m de ancho y 6,5 m de fondo, hasta antes del patio (aprox.).
     obra.prisma(M.arenisca, planta, y0 - 2, y0 + 3, huecos);
-    obra.prisma(M.areniscaVentanas, planta, y0 + 3, y0 + 17, huecos);
+    obra.prisma(M.areniscaVentanas, entallar(planta, F, -14.5, 14.5, 6.5), y0 + 3, y0 + 15.5, huecos);
+    obra.prisma(M.areniscaVentanas, planta, y0 + 15.5, y0 + 17, huecos, { piso: true });
     obra.prisma(M.areniscaOscura, planta, y0 + 17, y0 + 18.6, huecos);
-    const r = capitolio, lado = r.ladoHacia(centroPlaza);
-    const fachada = (lado.eje === 'u' ? r.mu : r.mw) * lado.signo;
-    for (let i = 0; i < 6; i++) for (let j = 0; j < 3; j++) {
-      const a = (i - 2.5) * 5.2, b = fachada + lado.signo * (2.5 + j * 4.2);
-      const p = lado.eje === 'u' ? r.punto(b, a) : r.punto(a, b);
-      obra.cilindro(M.estucoBlanco, p, 0.65, y0 + 3, y0 + 15.5, 12);
-    }
-    const fondo = fachada + lado.signo * 6.7;
-    const [cu, cw, du, dw] = lado.eje === 'u' ? [fondo, 0, 6.2, 16] : [0, fondo, 16, 6.2];
-    obra.caja(M.arenisca, r, cu, cw, du, dw, y0, y0 + 3);
-    obra.caja(M.areniscaOscura, r, cu, cw, du, dw, y0 + 15.5, y0 + 18.6);
+    for (let i = 0; i < 6; i++) for (let j = 0; j < 3; j++) obra.cilindro(M.arenisca, F.punto((i - 2.5) * 5.2, -1.2 - j * 2.2), 0.65, y0 + 3, y0 + 15.5, 12);
     // Balaustrada y urnas sobre la cornisa (foto de Commons de la fachada sur).
     obra.prisma(M.balaustrada, planta, y0 + 18.6, y0 + 19.8, huecos, { techo: false });
-    const F = obra.frente(r, lado);
     for (let a = -F.largo + 4; a <= F.largo - 4; a += 9) {
       const p = F.punto(a, -0.4);
       obra.torno(M.areniscaOscura, p, [[0.45, y0 + 19.8], [0.55, y0 + 20.4], [0.3, y0 + 20.9], [0.42, y0 + 21.5], [0, y0 + 21.7]], 8);
@@ -436,15 +778,25 @@ export function construirLugares(datos, terreno, edificios) {
     excluir.push(planta);
   }
 
-  // --- Palacio de Justicia: bloque de piedra (Roberto Londoño). Alto sin fuente: ~24 m aprox.
+  // --- Palacio de Justicia (Roberto Londoño): hacia la plaza, un bloque de piedra clara casi sin ventanas con una
+  // entrada honda al centro y pórticos con columnas a los lados; detrás del patio, un bloque más alto con ventanas
+  // (fotos de Commons). Alturas sin fuente: ~17 m el frente y ~28 m el de atrás, aprox.
   {
     const { anillos: [planta], huecos } = plantas.justicia;
     const y0 = explanada(planta, yPlaza) // al nivel de la plaza;
-    obra.prisma(M.areniscaOscura, planta, y0 - 2, y0 + 4, huecos);
-    obra.prisma(M.areniscaVentanas, planta, y0 + 4, y0 + 24, huecos);
+    const r = rectangulo(planta), F = obra.frente(r, r.ladoHacia(centroPlaza));
+    obra.prisma(M.piedraClara, planta, y0 - 2, y0 + 17, huecos);
+    F.panel(M.areniscaVentanas, 0, -76, 50, 34, y0, y0 + 28);
+    F.panel(M.sombra, 0, 0.05, 14, 0.2, y0 + 0.5, y0 + 11);
+    for (const t of [-1, 1]) {
+      F.panel(M.sombra, t * 26, 0.05, 20, 0.2, y0 + 3, y0 + 12);
+      for (const k of [-1, 1]) obra.cilindro(M.piedraClara, F.punto(t * 26 + k * 4, 1), 0.7, y0, y0 + 12.5, 10);
+    }
     excluir.push(planta);
   }
   excluir.push(plantas.capitolio.anillos[0]);
+  // El pedestal también choca. Va después de la Catedral: main.js toma solidos[0] como la Catedral.
+  if (pedestal) excluir.push(pedestal);
 
   // --- Teatro Colón y Museo Nacional (antiguo Panóptico): prioridad 3 y 2, volumen simple.
   for (const [k, mat, alto] of [['teatroColon', M.estucoBlanco, 20], ['museoNacional', M.arenisca, 12]]) {
@@ -560,6 +912,7 @@ export function construirLugares(datos, terreno, edificios) {
   }
 
   const grupo = obra.mallas('Lugares');
+  grupo.add(...extras);
 
   // --- Funicular (vía sobre el cerro) y teleférico (cable entre estaciones, con su cabina roja).
   const tramos = ['funicular3', 'funicular2', 'funicular1'].map((k) => plantas[k].anillos[0]).flat();
@@ -585,9 +938,13 @@ export function construirLugares(datos, terreno, edificios) {
     curva.getPointAt(k, cabina.position);
     cabina.position.y -= 2;
     cabina.lookAt(pb.x, cabina.position.y, pb.z);
+    // Los reflectores de la plaza se encienden con la noche, como las farolas.
+    const fuerza = Math.min(1.25, Math.max(0, (noche.value - 0.2) * 1.5));
+    for (const [l, intensidad] of reflectores) l.intensity = intensidad * fuerza;
   };
 
-  return { grupo, animar, excluir: (e) => excluir.some((p) => adentro([e.cx, e.cz], p)), solidos: excluir, centroPlaza };
+  const dentro = (e) => (p) => adentro([e.cx, e.cz], p);
+  return { grupo, animar, excluir: (e) => excluir.some(dentro(e)) || despejar.some(dentro(e)), solidos: excluir, centroPlaza, pisos };
 }
 
 // Puntos para el menú de lugares. La cámara se para del lado de `desde` (por defecto, la Plaza de Bolívar),
