@@ -966,7 +966,8 @@ export function puntosDeVista(datos, centroPlaza) {
     p(352, -380, 'Museo del Oro', 'Parque Santander e Iglesia de San Francisco', 230, 95),
     p(620, -440, 'Eje Ambiental', 'Avenida Jiménez y su canal de agua', 260, 90),
     p(1472, -501, 'Quinta de Bolívar', 'Casa museo al pie de Monserrate', 210, 90),
-    v('basilicaMonserrate', 'Monserrate', 'Teleférico, funicular y vista de la ciudad', 300, 90),
+    // A pie o en carro se llega a la estación de abajo del funicular y el teleférico, no a la cima.
+    v('basilicaMonserrate', 'Monserrate', 'Teleférico, funicular y vista de la ciudad', 300, 90, { llegada: [centro('estacionAbajo').cx, centro('estacionAbajo').cz] }),
     v('colpatria', 'Torre Colpatria', 'Mirador y fachada de LED', 480, 200),
     v('museoNacional', 'Museo Nacional', 'Antiguo Panóptico', 230, 95),
     v('planetario', 'Planetario', 'Parque de la Independencia', 260, 120),
