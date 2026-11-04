@@ -18,6 +18,7 @@ import { crearFarolas } from './farolas.js';
 import { crearCalles } from './calles.js';
 import { crearMinimapa } from './minimapa.js';
 import { crearSonido } from './sonido.js';
+import { crearTransMilenio } from './transmilenio.js';
 
 const DATOS = `./datos/${ZONA.nombre}/`;
 const barra = document.querySelector('#carga-barra'), textoCarga = document.querySelector('#carga-texto');
@@ -112,7 +113,9 @@ await respirar();
 escena.add(mallasEdificios(edificios, terreno, lugares.excluir).grupo);
 paso('Plantando árboles', 15);
 await respirar();
-escena.add(mallasArboles(arboles, terreno, (a) => lugares.excluir({ cx: a.x, cz: a.z })));
+// Los árboles cercanos (con hojas) se rehacen alrededor de la cámara; los lejanos son una versión lisa.
+const bosque = mallasArboles(arboles, terreno, (a) => lugares.excluir({ cx: a.x, cz: a.z }));
+escena.add(bosque);
 escena.add(mallaVias(vias, terreno));
 paso('Preparando la vista', 10);
 await respirar();
@@ -159,13 +162,18 @@ for (const anillo of lugares.solidos) muros.push({ anillo, techo: Infinity });
 const troncos = arboles.filter((a) => a.forma !== 4 && a.alt >= 3).map((a) => [a.x, a.z, a.alt > 12 ? 0.35 : 0.22]);
 const choques = crearChoques(muros, troncos);
 // Carros estacionados en calles secundarias y locales alrededor de la plaza; también suman a los choques.
-const calles = crearCalles(vias, terreno);
+const calles = crearCalles(vias, terreno, lugares.pisos ?? []);
 // Lo que se apoya en el suelo (carros, personas, postes) usa el piso de las calles, no el del terreno.
 const piso = { altura: calles.piso };
 const estacionados = estacionar({ vias, terreno: piso, choques, centro: lugares.centroPlaza });
 escena.add(estacionados.grupo);
 const farolas = crearFarolas({ vias, terreno: piso, choques, excluir: lugares.excluir });
 escena.add(farolas.grupo);
+// TransMilenio: buses articulados por los carriles exclusivos y estaciones en el separador.
+transmilenio = await crearTransMilenio({ vias, terreno: piso, datos: DATOS });
+escena.add(transmilenio.grupo);
+// 1 dentro de una estación, 0 a más de 60 m: para el pitido de puertas y el frenado de los buses.
+const cercaEstacion = (x, z) => Math.max(0, ...transmilenio.vagones.map((v) => 1 - Math.hypot(v.x - x, v.z - z) / 60));
 const [px, pz] = [lugares.centroPlaza[0] + 14, lugares.centroPlaza[1] + 14];
 const catedral = lugares.solidos[0];
 const ccx = catedral.reduce((s, [x]) => s + x, 0) / catedral.length, ccz = catedral.reduce((s, [, z]) => s + z, 0) / catedral.length;
@@ -343,7 +351,7 @@ renderer.setAnimationLoop(() => {
   sonido.actualizar({
     modo: recorrido.modo, velocidad: recorrido.velocidad(), noche: noche.value, hora: Number(control.value),
     alto: /caminar|manejar|bici/.test(recorrido.modo) ? 0 : camara.position.y - terreno.altura(camara.position.x, camara.position.z),
-    cercaPlaza: 1 - THREE.MathUtils.smoothstep(dPlaza, 80, 250), enTransMilenio: transmilenio?.cercaEstacion?.(jx, jz) ?? 0,
+    cercaPlaza: 1 - THREE.MathUtils.smoothstep(dPlaza, 80, 250), enTransMilenio: cercaEstacion(jx, jz),
   }, dt);
   const centroSombra = mira || controles.target;
   cameraPos.value.copy(camara.position);
@@ -351,6 +359,8 @@ renderer.setAnimationLoop(() => {
   sol.target.position.copy(centroSombra);
   lugares.animar(reloj.elapsedTime);
   farolas.actualizar(camara);
+  bosque.userData.actualizar?.(camara);
+  transmilenio.actualizar(dt, camara);
   tuberia.render();
 });
 
@@ -359,4 +369,4 @@ await renderer.compileAsync(escena, camara);
 paso('Listo', 10);
 document.querySelector('#carga').classList.add('oculta');
 // Para depurar desde la consola del navegador.
-window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados, farolas, calles, vias, exposicion, brillo };
+window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados, farolas, calles, vias, transmilenio, exposicion, brillo };

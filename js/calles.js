@@ -4,7 +4,18 @@ import { anchoVia, andenVia, altoVia, BORDILLO } from './vias.js';
 // alguien a pie (en el andén), si un punto está sobre la calzada y a qué altura está el piso. Rejilla de 64 m.
 const CELDA = 64;
 
-export function crearCalles(vias, terreno) {
+// Punto dentro de un polígono [[x, z], ...] (regla par-impar).
+const adentro = ([x, z], anillo) => {
+  let si = false;
+  for (let i = 0, j = anillo.length - 1; i < anillo.length; j = i++) {
+    const [xi, zi] = anillo[i], [xj, zj] = anillo[j];
+    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) si = !si;
+  }
+  return si;
+};
+
+// pisos: superficies elevadas de los lugares hechos a mano ({ anillo, y }), como la losa de la Plaza de Bolívar.
+export function crearCalles(vias, terreno, pisos = []) {
   const celdas = new Map();
   for (const v of vias) {
     const w = anchoVia(v) / 2, an = andenVia(v), dy = altoVia(v), r = w + an;
@@ -53,7 +64,9 @@ export function crearCalles(vias, terreno) {
       if (d <= s.w) extra = Math.max(extra, s.dy);
       else if (s.an && d <= s.w + s.an) extra = Math.max(extra, s.dy + BORDILLO);
     });
-    return terreno.altura(x, z) + extra;
+    let y = terreno.altura(x, z) + extra;
+    for (const p of pisos) if (adentro([x, z], p.anillo)) y = Math.max(y, p.y);
+    return y;
   }
 
   // Carril para un carro cerca de (x, z): la calle de carros más cercana (no de servicio ni de TransMilenio).

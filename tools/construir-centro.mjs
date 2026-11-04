@@ -205,7 +205,7 @@ function claseVia(t) {
 // Bit 0: un solo sentido. Bit 1: el sentido va al revés del dibujo. Bit 2: solo buses (carriles de TransMilenio).
 function banderasVia(t) {
   const uno = t.oneway === 'yes' || t.oneway === '1' || t.oneway === '-1' || /^(motorway|trunk)(_link)?$/.test(t.highway) && t.oneway !== 'no';
-  const bus = t.highway === 'busway' || (t.access === 'no' && /^(designated|yes)$/.test(t.bus || t.psv || ''));
+  const bus = t.highway === 'busway' || (t.access === 'no' && /^(designated|yes|bus)$/.test(t.bus || t.psv || ''));
   return (uno ? 1 : 0) | (t.oneway === '-1' ? 2 : 0) | (bus ? 4 : 0);
 }
 const extraVia = (t) => { const n = parseInt(t.lanes, 10); return [banderasVia(t), n > 0 && n < 10 ? n : 0]; };
