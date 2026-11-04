@@ -88,9 +88,10 @@ function agregar(c, e, k, terreno) {
   const exterior = e.anillos[0];
   let min = Infinity, max = -Infinity;
   for (const [x, z] of exterior) { const h = terreno.altura(x, z); min = Math.min(min, h); max = Math.max(max, h); }
-  // Los pisos arrancan a media loma: del lado de abajo queda un zócalo alto y del de arriba el primer piso se
-  // mete un poco en la pendiente, como en las calles empinadas de La Candelaria.
-  const base = min + (max - min) * 0.5;
+  // El primer piso arranca a nivel del andén en el punto más alto de la planta (las vías y andenes van ~0,45 m sobre
+  // el terreno): así una casa de un piso nunca queda enterrada a la altura de un carro del lado de arriba de la
+  // loma; del lado de abajo queda un zócalo alto, como en las calles empinadas de La Candelaria.
+  const base = max + 0.45;
   const abajo = min - 3;
   const arriba = base + e.pisos * ALTURA_PISO + 0.6;
   const [muro, techo, familia] = colores(e, k);

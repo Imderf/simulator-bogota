@@ -221,8 +221,16 @@ escena.add(estacionados.grupo);
 const farolas = crearFarolas({ vias, terreno: piso, choques, excluir: lugares.excluir });
 escena.add(farolas.grupo);
 // TransMilenio: buses articulados por los carriles exclusivos y estaciones en el separador.
-transmilenio = await crearTransMilenio({ vias, terreno: piso, datos: DATOS });
+// Recibe el terreno real: el módulo ya levanta buses y estaciones a la altura de la calzada de bus.
+transmilenio = await crearTransMilenio({ vias, terreno, datos: DATOS });
 escena.add(transmilenio.grupo);
+// Losa de parada (concreto a lado y lado) y plataforma de cada estación como piso, para no hundirse junto a ellas.
+calles.agregarPisos(transmilenio.vagones.flatMap((v) => {
+  const ex = -Math.sin(v.rumbo), ez = -Math.cos(v.rumbo);
+  const rect = (w, l) => [[-w, -l], [w, -l], [w, l], [-w, l]].map(([lx, lz]) => [v.x + lx * -ez + lz * -ex, v.z + lx * ex + lz * -ez]);
+  const y = terreno.altura(v.x, v.z) + 0.42;
+  return [{ anillo: rect(v.ancho / 2 + 3.7, v.largo / 2 + 12), y: y - 0.025 }, { anillo: rect(v.ancho / 2, v.largo / 2), y: y + 0.92 }];
+}));
 // Gente caminando por andenes, la Séptima y la plaza; cuánta depende de la hora.
 const peatones = crearPeatones({ vias, calles, choques, lugares });
 escena.add(peatones.grupo);

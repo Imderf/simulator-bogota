@@ -101,5 +101,7 @@ export function crearCalles(vias, terreno, pisos = []) {
     return mejor;
   }
 
-  return { dentro, carril, anden, piso };
+  // Superficies que se agregan después de crear las calles (las plataformas y losas de TransMilenio).
+  const agregarPisos = (lista) => pisos.push(...lista);
+  return { dentro, carril, anden, piso, agregarPisos };
 }
