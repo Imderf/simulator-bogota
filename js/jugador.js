@@ -290,8 +290,14 @@ export function crearRecorrido({ escena, camara, terreno, choques, calles, techo
     return seguir(c.x, c.z, c.rumbo, v.largo * 2.1 + 1.5 + Math.abs(c.vel) * 0.15, 2.6 + v.largo * 0.25, 1.2, dt);
   }
 
-  // Arrastrar sobre la escena gira la cámara alrededor; al soltar vuelve sola detrás.
-  const vista = { yaw: 0, alto: 0, arrastrando: false, px: 0, py: 0 };
+  // Arrastrar gira la cámara alrededor y la rueda acerca o aleja (como Slop New York). Quieto, la vista se queda
+  // donde la dejaste para mirar un edificio; al moverse vuelve sola detrás 2,5 s después de soltar.
+  const vista = { yaw: 0, alto: 0, zoom: 1, arrastrando: false, px: 0, py: 0, soltado: 0 };
+  lienzo.addEventListener('wheel', (e) => {
+    if (modo === 'libre') return;
+    e.preventDefault();
+    vista.zoom = Math.max(0.45, Math.min(4, vista.zoom * Math.exp(e.deltaY * 0.0012)));
+  }, { passive: false });
   lienzo.addEventListener('pointerdown', (e) => {
     if (modo === 'libre' || e.target !== lienzo) return;
     vista.arrastrando = true; vista.px = e.clientX; vista.py = e.clientY;
@@ -299,22 +305,24 @@ export function crearRecorrido({ escena, camara, terreno, choques, calles, techo
   addEventListener('pointermove', (e) => {
     if (!vista.arrastrando) return;
     vista.yaw -= (e.clientX - vista.px) * 0.006;
-    vista.alto = Math.max(-0.6, Math.min(1.2, vista.alto + (e.clientY - vista.py) * 0.004));
+    vista.alto = Math.max(-0.6, Math.min(3, vista.alto + (e.clientY - vista.py) * 0.004));
     vista.px = e.clientX; vista.py = e.clientY;
   });
-  addEventListener('pointerup', () => { vista.arrastrando = false; });
+  addEventListener('pointerup', () => { if (vista.arrastrando) vista.soltado = performance.now(); vista.arrastrando = false; });
 
   // Cámara detrás, suavizada. Si un muro se interpone, se acerca; si queda bajo el terreno, sube.
   const deseo = new THREE.Vector3();
   function seguir(x, z, rumbo, dist, alto, mirarAlto, dt, yBase = terreno.altura(x, z)) {
-    if (!vista.arrastrando) {
+    const vel = ({ manejar: c.vel, caminar: p.vel, bici: b.vel, volar: Math.hypot(h.vel, h.velY) })[modo] ?? 0;
+    if (!vista.arrastrando && Math.abs(vel) > 0.5 && performance.now() - vista.soltado > 2500) {
       vista.yaw *= Math.exp(-dt * 1.5);
       vista.alto *= Math.exp(-dt * 1.5);
     }
+    dist *= vista.zoom;
     const y = yBase, a = rumbo + vista.yaw;
     mira.set(x, y + mirarAlto, z);
-    const h = alto * (1 + vista.alto);
-    deseo.set(x + Math.sin(a) * dist, y + h, z + Math.cos(a) * dist);
+    const alt = alto * (1 + vista.alto) * vista.zoom;
+    deseo.set(x + Math.sin(a) * dist, y + alt, z + Math.cos(a) * dist);
     const t = choques.rayo(mira.x, mira.y, mira.z, deseo.x, deseo.y, deseo.z);
     if (t < 1) deseo.lerpVectors(mira, deseo, Math.max(0.15, t - 0.6 / dist));
     deseo.y = Math.max(deseo.y, terreno.altura(deseo.x, deseo.z) + 1.2);
