@@ -144,7 +144,7 @@ También: al elegir **Monserrate en el tour** caminando, el jugador aparece al p
 ### Comparación con Slop New York (2026-11-04)
 
 - Golden hour: corregida la oscuridad (relleno de luz con sol bajo).
-- Rendimiento: 21-34 fps frente a 60-80 de la referencia en el mismo Chrome. Costos por grupo (Plaza de Bolívar): carros estacionados +6 fps al ocultarlos, detalle de edificios +4, edificios +3, vías +3; sombras de carros/tráfico/gente/mobiliario +4. Siguiente: medir con resolución menor, simplificar de lejos los shaders de terreno y asfalto, limitar los estacionados con pintura completa y probar SSR a un cuarto de resolución.
+- Rendimiento (corregido): la comparación de cuadros por segundo no fue confiable. La ventana de Chrome de automatización se limita a 30 en cualquier página (también la referencia y una página vacía). En el simulador el procesador gasta ~9 ms por cuadro y el hilo principal está libre. Falta medir en el Chrome de Imderf mirando el contador de la tarjeta superior izquierda en varias vistas; si baja de 45, candidatos: carros estacionados con pintura completa, shader de terreno, asfalto con charcos y SSR.
 
 ## Lo que sigue
 

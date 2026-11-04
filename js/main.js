@@ -557,4 +557,4 @@ await renderer.compileAsync(escena, camara);
 paso('Listo', 10);
 document.querySelector('#carga').classList.add('oculta');
 // Para depurar desde la consola del navegador.
-window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados, farolas, calles, vias, transmilenio, peatones, trafico, mobiliario, aeropuerto, arbolesEnPie, exposicion, brillo };
+window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados, farolas, calles, vias, transmilenio, peatones, trafico, mobiliario, aeropuerto, arbolesEnPie, exposicion, brillo, renderer, tuberia, luzSol, reflejo };
