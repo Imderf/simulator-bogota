@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { attribute, vertexColor, positionWorld, mx_noise_float, fwidth, fract, abs, smoothstep, step, mix, max, float, vec3 } from 'three/tsl';
+import { attribute, vertexColor, positionWorld, cameraPosition, normalize, mx_noise_float, fwidth, fract, abs, pow, clamp, smoothstep, step, mix, max, float, vec2, vec3, uniform } from 'three/tsl';
 import { cargarBinario } from './binario.js';
 
 const Q = 0.5;
@@ -159,12 +159,30 @@ function materialAsfalto() {
   const parche = smoothstep(0.55, 0.6, mx_noise_float(p.mul(0.045).add(7.3)));
   const asfalto = vec3(0.05, 0.051, 0.054).mul(ruido.mul(0.22).add(1)).mul(float(1).sub(parche.mul(0.25)));
   const concreto = vec3(0.27, 0.262, 0.245).mul(ruido.mul(0.12).add(1));
+  // Calle mojada (Adaptado de Slop New York, mrdoob, MIT: tsl-materials.js, roadPuddleField y roadWetMasks): el agua
+  // se junta primero en las partes bajas de un campo de ruido; con `mojado` aparecen manchas húmedas, una película
+  // y charcos que reflejan como espejo (el SSR del postproceso pone ahí las luces y el cielo).
+  const n01 = (q) => mx_noise_float(q).mul(0.5).add(0.5);
+  const campo = n01(p.mul(vec2(0.095, 0.075))).mul(0.52).add(n01(p.mul(vec2(0.25, 0.22)).add(vec2(19.4, 11.8))).mul(0.34))
+    .add(n01(p.mul(0.68).add(vec2(-7.3, 29.1))).mul(0.14));
+  const nivel = mix(float(0.86), float(0.56), clamp(mojado.sub(0.1).div(0.55), 0, 1));
+  const humedo = smoothstep(nivel.sub(0.09), nivel.sub(0.015), campo);
+  const charco = smoothstep(nivel, nivel.add(0.022), campo).mul(smoothstep(0.1, 0.22, mojado));
+  const pelicula = smoothstep(0.2, 0.8, mojado);
+  const vista = normalize(cameraPosition.sub(positionWorld));
+  const fresnel = pow(float(1).sub(abs(vista.y)), 5).mul(0.98).add(0.02);
   const m = new THREE.MeshStandardNodeMaterial({ polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   const base = mix(asfalto, concreto, step(2.5, codigo));
-  m.colorNode = mix(mix(base, vec3(0.72, 0.72, 0.7), blanco.mul(0.9)), vec3(0.78, 0.55, 0.06), amarillo.mul(0.9));
-  m.roughnessNode = mix(float(0.93), float(0.6), max(blanco, amarillo));
+  const pintado = mix(mix(base, vec3(0.72, 0.72, 0.7), blanco.mul(0.9)), vec3(0.78, 0.55, 0.06), amarillo.mul(0.9));
+  m.colorNode = pintado.mul(mix(mix(float(1), float(0.72), humedo), float(0.6), charco)).mul(mix(float(1), float(0.8), pelicula));
+  const seco = mix(float(0.93), float(0.6), max(blanco, amarillo));
+  m.roughnessNode = mix(mix(mix(seco, float(0.68), pelicula.mul(0.7)), float(0.4), humedo.mul(0.85)), float(0.1), charco);
+  m.metalnessNode = clamp(fresnel.mul(1.6), 0, 0.85).mul(max(charco, max(humedo.mul(0.35), pelicula.mul(0.15))));
   return m;
 }
+
+// Qué tan mojadas están las calles: 0 seco, 1 recién llovió. Lo pone main.js según la hora.
+export const mojado = uniform(0.1);
 
 // Cintas apoyadas en el terreno, partidas cada 12 m para que sigan el relieve.
 function cintas(vias, terreno) {

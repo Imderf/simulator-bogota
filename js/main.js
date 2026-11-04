@@ -3,12 +3,17 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
-import { vertexColor, texture, uv, mix, vec3, vec4, float, max, uniform, pass, smoothstep, positionWorldDirection, color } from 'three/tsl';
+import { ssr } from 'three/addons/tsl/display/SSRNode.js';
+import { SunLight } from 'three/addons/lights/SunLight.js';
+import { SunLightNode } from 'three/addons/lights/SunLightNode.js';
+import { vertexColor, texture, uv, mix, vec2, vec3, vec4, float, max, min, uniform, pass, smoothstep, positionWorldDirection, color,
+  mrt, output, normalView, positionView, metalness, roughness, dot, pow, length, screenUV, screenSize, Fn,
+  positionWorld, cameraPosition, normalize, exp, abs, pmremTexture, fog } from 'three/tsl';
 import { ZONA, aMundo } from './marco.js';
 import { cargarTerreno, mallaTerreno } from './terreno.js';
 import { cargarEdificios, mallasEdificios, noche, ALTURA_PISO } from './edificios.js';
 import { cargarArboles, mallasArboles } from './arboles.js';
-import { cargarLineas, mallaVias, texturaSuelo } from './vias.js';
+import { cargarLineas, mallaVias, texturaSuelo, mojado } from './vias.js';
 import { construirLugares, puntosDeVista, cameraPos } from './lugares.js';
 import { direccionSol, diaDelAno } from './sol.js';
 import { crearChoques } from './choques.js';
@@ -29,7 +34,9 @@ const paso = (texto, cuanto) => { avance += cuanto; barra.style.width = `${Math.
 const respirar = () => new Promise((listo) => { requestAnimationFrame(() => setTimeout(listo, 0)); setTimeout(listo, 80); });
 
 const renderer = new THREE.WebGPURenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// Como Slop New York: resolución 1:1 con antialiasing. En pantallas retina la 2× cuesta cuatro veces más píxeles y la
+// interfaz (HTML) se ve nítida igual.
+renderer.setPixelRatio(1);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1; // la exposición va en el postproceso, antes del bloom
@@ -58,16 +65,19 @@ cielo.rayleigh.value = 1.6;
 cielo.mieCoefficient.value = 0.006;
 cielo.mieDirectionalG.value = 0.8;
 escena.add(cielo);
-const sol = new THREE.DirectionalLight(0xfff3e0, 3.2);
-sol.castShadow = true;
-sol.shadow.mapSize.set(2048, 2048);
-Object.assign(sol.shadow.camera, { left: -700, right: 700, top: 700, bottom: -700, near: 10, far: 6000 });
-sol.shadow.bias = -0.0004;
-sol.shadow.normalBias = 0.6;
-escena.add(sol, sol.target);
+// Sol con sombras en cascada (como Slop New York): nítidas cerca de la cámara y que alcanzan lejos. La luz va desde su
+// posición hacia el origen, así que basta poner ahí la dirección del sol (o de la luna).
+SunLight.registerNode(SunLightNode);
+const luzSol = new SunLight(0xfff3e0, 3.2);
+luzSol.castShadow = true;
+const maxTextura = renderer.backend?.device?.limits?.maxTextureDimension2D || 4096;
+luzSol.shadow.mapSize.setScalar(maxTextura >= 6144 ? 3072 : 2048);
+luzSol.shadow.camera.near = 0.5;
+luzSol.shadow.camera.far = 300;
+luzSol.shadow.normalBias = 0.05;
+escena.add(luzSol);
 const relleno = new THREE.HemisphereLight(0xcfe0f5, 0x5d5a50, 1.1);
 escena.add(relleno);
-escena.fog = new THREE.Fog(0xb8c6d4, 2500, 22000);
 // El cielo se hornea como mapa de entorno: sin él, vidrios y metales no reflejan nada y salen negros.
 const pmrem = new THREE.PMREMGenerator(renderer), escenaCielo = new THREE.Scene();
 let entorno = null;
@@ -79,6 +89,20 @@ function hornearCielo() {
   escena.environmentIntensity = 0.2;
   cielo.showSunDisc.value = 1;
   escena.add(cielo);
+  if (!escena.fogNode) escena.fogNode = nieblaAerea();
+}
+// Bruma de la sabana con el color del cielo horneado hacia donde se mira (Adaptado de Slop New York, mrdoob, MIT:
+// lighting.js, createAerialFogNode). Más espesa abajo; de noche se mezcla con azul oscuro porque el cielo está negro.
+const densidadNiebla = uniform(0.00009), nocheNiebla = uniform(0);
+function nieblaAerea() {
+  const hacia = positionWorld.sub(cameraPosition), dist = length(hacia), dir = hacia.div(max(dist, 0.001));
+  const horizonte = normalize(vec3(dir.x, max(dir.y, 0.015), dir.z));
+  const colorCielo = mix(pmremTexture(entorno.texture, horizonte, float(0)).rgb, color(0x141c2c), nocheNiebla);
+  const H = float(900), ya = max(positionWorld.y, 0), yb = max(cameraPosition.y, 0), dy = yb.sub(ya);
+  const ea = exp(ya.div(H).negate()), eb = exp(yb.div(H).negate());
+  const media = abs(dy).greaterThan(1).select(ea.sub(eb).mul(H).div(dy), ea);
+  const tau = densidadNiebla.mul(dist).mul(media);
+  return fog(colorCielo, float(1).sub(exp(tau.mul(tau).negate())));
 }
 // De noche el cielo físico queda negro: se cambia por un degradé azul oscuro que empata con la niebla.
 escena.backgroundNode = mix(color(0x141c2c), color(0x050a16), smoothstep(0, 0.6, positionWorldDirection.y));
@@ -250,14 +274,47 @@ addEventListener('keydown', (e) => {
 });
 marcarSonido();
 
-// Postproceso: la exposición va antes del bloom para que su umbral siga el brillo real; ACES se aplica al final.
-// El pico que entra al bloom se limita para que los LED de Colpatria no quemen la imagen.
-const exposicion = uniform(0.6);
-const expuesto = max(pass(escena, camara).getTextureNode('output').rgb, vec3(0)).mul(exposicion);
+// Postproceso (Adaptado de Slop New York, mrdoob, MIT: main.js y post-processing.js):
+// - Reflejos en pantalla (SSR) a media resolución solo en lo brillante: charcos, agua, vidrio y carros.
+// - La exposición va antes del bloom para que su umbral siga el brillo real; el pico que entra al bloom se limita
+//   para que los LED de Colpatria no quemen la imagen. ACES se aplica al final.
+// - Gradación de cámara: contraste, saturación, balance de blancos, sombras frías y luces cálidas, viñeta suave.
+const escenaPass = pass(escena, camara);
+const RUGOSIDAD_SSR = 0.75, fundidoSSR = smoothstep(360, 180, positionView.z.negate());
+const mrtEscena = mrt({
+  output,
+  normal: normalView,
+  metalRough: vec2(roughness.lessThan(RUGOSIDAD_SSR).select(metalness.mul(fundidoSSR), 0), roughness),
+});
+mrtEscena.setBlendMode('normal', new THREE.BlendMode(THREE.MaterialBlending));
+mrtEscena.setBlendMode('metalRough', new THREE.BlendMode(THREE.MaterialBlending));
+escenaPass.setMRT(mrtEscena);
+const colorEscena = escenaPass.getTextureNode('output'), metalRough = escenaPass.getTextureNode('metalRough');
+const reflejo = ssr(colorEscena, escenaPass.getTextureNode('depth'), escenaPass.getTextureNode('normal'), {
+  metalnessNode: metalRough.r, roughnessNode: metalRough.g, camera: camara,
+});
+Object.assign(reflejo, { resolutionScale: 0.5, blurQuality: 1, binaryRefine: true, screenEdgeFadeBlack: true });
+reflejo.maxDistance.value = 42; reflejo.thickness.value = 0.85; reflejo.quality.value = 0.25; reflejo.intensity.value = 0.5;
+const reflejos = reflejo.mul(metalRough.r.greaterThan(0).select(smoothstep(RUGOSIDAD_SSR, 0.55, metalRough.g), 0));
+
+const exposicion = uniform(0.6), contraste = uniform(1.1), saturacion = uniform(1.07), balance = uniform(new THREE.Vector3(1, 1, 1));
+const expuesto = max(colorEscena.rgb.add(reflejos.rgb), vec3(0)).mul(exposicion).mul(balance);
 const pico = max(max(expuesto.r, expuesto.g), expuesto.b);
 const brillo = bloom(vec4(expuesto.mul(float(8).div(max(pico, 8))), 1), 0.2, 0.4, 1.2);
 brillo.setResolutionScale(0.5);
-const tuberia = new THREE.RenderPipeline(renderer, vec4(expuesto.add(brillo.rgb), 1));
+const graduado = Fn(() => {
+  const c = expuesto.add(brillo.rgb).toVar();
+  const luma = dot(c, vec3(0.2126, 0.7152, 0.0722)).toVar();
+  c.mulAssign(mix(vec3(0.965, 1.005, 1.045), vec3(1), smoothstep(0.02, 0.6, luma)).mul(mix(vec3(1), vec3(1.035, 1.005, 0.965), smoothstep(0.6, 3, luma))));
+  c.mulAssign(pow(max(luma, 0.0001).div(0.18), contraste.sub(1)));
+  const gris = dot(c, vec3(0.2126, 0.7152, 0.0722)), alto = max(max(c.r, c.g), c.b);
+  const viveza = float(0.1).mul(float(1).sub(alto.sub(min(min(c.r, c.g), c.b)).div(max(alto, 0.0001))));
+  c.assign(max(mix(vec3(gris), c, saturacion.add(viveza)), vec3(0)));
+  const aspecto = screenSize.x.div(screenSize.y);
+  const radio = length(screenUV.sub(0.5).mul(vec2(aspecto, 1))).div(length(vec2(aspecto, 1).mul(0.5)));
+  return vec4(c.mul(float(1).sub(smoothstep(0.35, 1, radio).mul(0.12))), 1);
+})();
+const tuberia = new THREE.RenderPipeline(renderer, graduado);
 
 // Hora del día. Siempre arranca de día (mediodía); los botones de arriba la cambian.
 const control = document.querySelector('#hora'), etiqueta = document.querySelector('#hora-texto');
@@ -266,7 +323,6 @@ control.value = '12';
 const dirSol = new THREE.Vector3(), dirLuz = new THREE.Vector3(), dia = diaDelAno(ahora);
 // Noche "de cine", como en Slop New York: luna azul con sombras, relleno azul y lo que brilla por encima del bloom.
 const LUNA = new THREE.Vector3(-0.35, 0.82, 0.45).normalize();
-const C_DIA = new THREE.Color(0xb8c6d4), C_NOCHE = new THREE.Color(0x141c2c), cNiebla = new THREE.Color();
 const CIELO = [new THREE.Color(0x2a3c64), new THREE.Color(0xcfe0f5)], SUELO = [new THREE.Color(0x3a3036), new THREE.Color(0x5d5a50)];
 let horneada = null;
 function aplicarHora() {
@@ -278,14 +334,18 @@ function aplicarHora() {
   const luz = ss(altura, -0.05, 0.25), luna = 1 - ss(altura, -0.12, -0.02), claro = ss(altura, -0.15, 0.3);
   // Cuando el sol se esconde, la misma luz pasa a ser la luna.
   dirLuz.copy(altura > -0.02 ? dirSol : LUNA);
-  sol.intensity = 3.2 * luz + 0.4 * luna;
-  if (altura > -0.02) sol.color.setHSL(0.09, 0.6, 0.55 + 0.4 * luz); else sol.color.set(0x8cb0e8);
+  luzSol.intensity = 3.2 * luz + 0.4 * luna;
+  if (altura > -0.02) luzSol.color.setHSL(0.09, 0.6, 0.55 + 0.4 * luz); else luzSol.color.set(0x8cb0e8);
   relleno.intensity = 0.45 + 0.35 * claro;
   relleno.color.lerpColors(CIELO[0], CIELO[1], claro);
   relleno.groundColor.lerpColors(SUELO[0], SUELO[1], claro);
   noche.value = 1 - ss(altura, -0.08, 0.12);
-  escena.fog.color.copy(cNiebla.copy(C_NOCHE).lerp(C_DIA, ss(altura, -0.12, 0.2)));
+  nocheNiebla.value = 1 - ss(altura, -0.12, 0.05);
   cielo.visible = altura > -0.1;
+  // Golden hour: balance cálido; noche: un poco frío. Las calles se mojan hacia la tarde y la noche (Bogotá llueve).
+  const dorada = ss(altura, -0.02, 0.08) * (1 - ss(altura, 0.25, 0.45));
+  balance.value.set(1.015, 1, 0.985).lerp(new THREE.Vector3(1.045, 1, 0.955), dorada).lerp(new THREE.Vector3(0.985, 1, 1.035), noche.value);
+  mojado.value = 0.1 + 0.2 * dorada + 0.5 * noche.value;
   exposicion.value = 0.48 + 0.37 * (1 - luz);
   brillo.strength.value = 0.12 + 0.2 * (1 - luz);
   brillo.threshold.value = 1.0 + 0.4 * luz;
@@ -355,8 +415,9 @@ renderer.setAnimationLoop(() => {
   }, dt);
   const centroSombra = mira || controles.target;
   cameraPos.value.copy(camara.position);
-  sol.position.copy(centroSombra).addScaledVector(dirLuz, 3000);
-  sol.target.position.copy(centroSombra);
+  luzSol.position.copy(dirLuz);
+  // La cascada cercana queda nítida a nivel de calle y se alarga con la altura (helicóptero, vista libre).
+  luzSol.shadow.camera.far = Math.max(300, Math.min(720, 260 + (camara.position.y - terreno.altura(camara.position.x, camara.position.z)) * 1.6));
   lugares.animar(reloj.elapsedTime);
   farolas.actualizar(camara);
   bosque.userData.actualizar?.(camara);
