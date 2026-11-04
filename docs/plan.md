@@ -117,6 +117,8 @@ En curso: fachadas al nivel de la referencia (vidrio con cuartos, rejas, avisos,
 
 En la Avenida Carrera 5 Este / Avenida Carrera 5A Este, junto a la estación de abajo del teleférico y el funicular de Monserrate (x ≈ 1.680, z ≈ -520): dos carros (taxi amarillo y sedán blanco) quedan **montados uno sobre otro, lado a lado**, en una vía de doble sentido en pendiente; los carros **saltan** (cambios bruscos de altura) al subir; y la calzada queda como un escalón con el terreno por encima del andén. Revisar en js/trafico.js el desplazamiento de carril por sentido cuando la vía tiene 1 carril o ninguno declarado (los dos sentidos no pueden compartir el mismo carril), el suavizado de la altura de los vehículos sobre calles.piso en pendiente, y en js/vias.js la cinta en curvas cerradas con pendiente.
 
+También: al elegir **Monserrate en el tour** caminando, el jugador aparece al pie del cerro (andén más cercano) sin ver la basílica. Que aparezca arriba, en la explanada junto a la basílica (lugares.js: basilicaMonserrate), mirando hacia ella, con la cámara que la muestre; en Manejar, en la vía de acceso más cercana con vista al cerro.
+
 ## Lo que sigue
 
 1. **Probar en un celular real**: Android e iPhone, con datos móviles.
