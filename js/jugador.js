@@ -52,7 +52,9 @@ function crearControles(elJoystick) {
 // ---------------------------------------------------------------------------------------------------------------
 // El recorrido: modos, física y cámara.
 // ---------------------------------------------------------------------------------------------------------------
-export function crearRecorrido({ escena, camara, terreno, choques, calles, inicio, elJoystick, lienzo, estacionados }) {
+export function crearRecorrido({ escena, camara, terreno, choques, calles, techo = (x, z) => terreno.altura(x, z), inicio, elJoystick, lienzo, estacionados }) {
+  // Altura segura para el helicóptero: 35 m sobre el techo más alto alrededor del punto.
+  const sobreTechos = (x, z) => Math.max(...[[0, 0], [20, 0], [-20, 0], [0, 20], [0, -20]].map(([a, b]) => techo(x + a, z + b))) + 35;
   const persona = crearPersonaje();
   escena.add(persona.raiz);
   const controles = crearControles(elJoystick);
@@ -165,7 +167,7 @@ export function crearRecorrido({ escena, camara, terreno, choques, calles, inici
     } else if (nuevo === 'volar') {
       // Aparece flotando a 60 m sobre el jugador; si ya estaba cerca, sigue donde se dejó.
       if (!h.puesto || Math.hypot(h.x - p.x, h.z - p.z) > 400) {
-        Object.assign(h, { x: p.x, z: p.z, y: terreno.altura(p.x, p.z) + 60, rumbo: p.rumbo, puesto: true });
+        Object.assign(h, { x: p.x, z: p.z, y: Math.max(terreno.altura(p.x, p.z) + 60, sobreTechos(p.x, p.z)), rumbo: p.rumbo, puesto: true });
       }
       Object.assign(h, { vel: 0, velY: 0 });
       heli.raiz.visible = true;
@@ -334,14 +336,15 @@ export function crearRecorrido({ escena, camara, terreno, choques, calles, inici
     nombreCarro: () => TIPOS[v.tipo]?.nombre || 'Carro',
     llevarA(x, z, rumbo = p.rumbo) { p.x = x; p.z = z; p.rumbo = rumbo; p.vel = 0; choques.empujar(p, 0.35); colocar(); },
     // Tour: el carro aparece en el carril de la calle más cercana al lugar; a pie, en el andén.
-    teletransportar(x, z) {
+    // vuelo: { x, z, y, rumbo } para el helicóptero (main.js lo calcula a un costado del lugar).
+    teletransportar(x, z, vuelo) {
       if (modo === 'manejar') {
         const q = calles.carril(x, z, c.rumbo, 500);
         if (!q) return;
         Object.assign(c, { x: q.x, z: q.z, rumbo: q.rumbo, vel: 0, giro: 0, y: null, vy: 0, inercia: 0 });
         colocarTaxi();
       } else if (modo === 'volar') {
-        Object.assign(h, { x, z, y: Math.max(h.y, terreno.altura(x, z) + 120), vel: 0, velY: 0 });
+        Object.assign(h, vuelo || { x, z, y: Math.max(h.y, terreno.altura(x, z) + 120, sobreTechos(x, z)) }, { vel: 0, velY: 0 });
         colocarHeli();
       } else if (modo === 'bici') {
         const a = calles.anden(x, z, 500) || { x, z, rumbo: b.rumbo };

@@ -59,6 +59,7 @@
     <symbol id="i-bici" viewBox="0 0 24 24"><circle cx="5.5" cy="16.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="18.5" cy="16.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 16.5 9 9h6l3.5 7.5M9 9l3 7.5 3-7.5M8 6h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-helicoptero" viewBox="0 0 24 24"><path d="M3 5h14M10 5v3M6 11a4 3 0 0 1 4-3h3a4 4 0 0 1 4 4v1a2 2 0 0 1-2 2H9a3 3 0 0 1-3-3zM17 12h4l1-3M8 18h9M10 15v3M15 15v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-mapa" viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+    <symbol id="i-bus" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 11h18M8 4v7M16 4v7M6.5 20.5v-2.5M17.5 20.5v-2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="7" cy="14.5" r="1" fill="currentColor"/><circle cx="17" cy="14.5" r="1" fill="currentColor"/></symbol>
     <symbol id="i-flecha" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </svg>
 
@@ -71,7 +72,6 @@
     <div id="horas" role="group" aria-label="Hora del día">
       <button data-hora="17.25" title="Golden hour, 17:15"><svg><use href="#i-dorada" /></svg><span>Golden hour</span></button>
       <button data-hora="12" title="Mediodía, 12:00"><svg><use href="#i-sol" /></svg><span>Mediodía</span></button>
-      <button data-hora="18.25" title="Hora azul, 18:15"><svg><use href="#i-azul" /></svg><span>Hora azul</span></button>
       <button data-hora="21" title="Noche, 21:00"><svg><use href="#i-luna" /></svg><span>Noche</span></button>
     </div>
     <div id="reloj">
@@ -80,14 +80,20 @@
     </div>
     <span class="divisor" aria-hidden="true"></span>
     <button id="boton-tour" popovertarget="tour" aria-label="Tour por los lugares"><svg><use href="#i-pin" /></svg><span>Tour</span><svg class="chico"><use href="#i-flecha" /></svg></button>
+    <button id="boton-tm" popovertarget="estaciones" aria-label="Estaciones de TransMilenio"><svg><use href="#i-bus" /></svg><span>TransMilenio</span><svg class="chico"><use href="#i-flecha" /></svg></button>
     <button id="boton-mapa" title="Atlas de Bogotá (M)" aria-label="Abrir el mapa"><svg><use href="#i-mapa" /></svg><span>Mapa</span><kbd>M</kbd></button>
     <button id="boton-sonido" class="icono" aria-pressed="false" title="Sonido (N)" aria-label="Sonido"><svg><use href="#i-sonido" /></svg></button>
     <button id="boton-ocultar" class="icono" title="Ocultar la interfaz (H)" aria-label="Ocultar la interfaz"><svg><use href="#i-ojo" /></svg></button>
   </nav>
 
-  <div id="tour" popover>
+  <div id="tour" class="lista" popover>
     <p class="tour-titulo">Tour por el Centro</p>
     <ol id="lugares"></ol>
+  </div>
+
+  <div id="estaciones" class="lista" popover>
+    <p class="tour-titulo">Estaciones de TransMilenio</p>
+    <ol id="lista-estaciones"></ol>
   </div>
 
   <div id="abajo">

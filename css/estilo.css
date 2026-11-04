@@ -57,26 +57,26 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--acento); ou
 #boton-sonido[aria-pressed="false"] .tachado { display: inline; }
 
 /* Tour: lista de paradas en un popover nativo (cierra solo con Esc o clic afuera). */
-#tour {
+#tour, #estaciones {
   position: fixed; inset: 64px var(--margen) auto auto; margin: 0; padding: 8px; width: 290px;
   max-height: calc(100% - 200px); overflow-y: auto; color: var(--texto);
   background: var(--fondo-fuerte); border: 1px solid var(--borde); border-radius: var(--radio);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   opacity: 0; transform: translateY(-6px); transition: opacity 0.2s, transform 0.2s, display 0.2s allow-discrete;
 }
-#tour:popover-open { opacity: 1; transform: none; }
-@starting-style { #tour:popover-open { opacity: 0; transform: translateY(-6px); } }
+.lista:popover-open { opacity: 1; transform: none; }
+@starting-style { .lista:popover-open { opacity: 0; transform: translateY(-6px); } }
 .tour-titulo { margin: 4px 8px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--suave); }
-#lugares { list-style: none; margin: 0; padding: 0; counter-reset: parada; }
-#lugares button {
+#lugares, #lista-estaciones { list-style: none; margin: 0; padding: 0; counter-reset: parada; }
+.lista li button {
   display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 8px 10px; text-align: left; font-size: 13.5px;
   background: none; border: 0; border-radius: 9px; cursor: pointer; counter-increment: parada;
 }
-#lugares button::before { content: counter(parada); font-size: 11px; color: var(--suave); min-width: 1.4em; font-variant-numeric: tabular-nums; }
-#lugares button small { display: block; font-size: 11.5px; color: var(--suave); margin-top: 2px; }
-#lugares button:hover { background: rgba(255, 255, 255, 0.06); }
-#lugares button.activo { background: rgba(245, 197, 24, 0.14); }
-#lugares button.activo::before { color: var(--acento); }
+.lista li button::before { content: counter(parada); font-size: 11px; color: var(--suave); min-width: 1.4em; font-variant-numeric: tabular-nums; }
+.lista li button small { display: block; font-size: 11.5px; color: var(--suave); margin-top: 2px; }
+.lista li button:hover { background: rgba(255, 255, 255, 0.06); }
+.lista li button.activo { background: rgba(245, 197, 24, 0.14); }
+.lista li button.activo::before { color: var(--acento); }
 
 /* Abajo: ayudas de teclado y barra de modos con la píldora que se desliza. */
 #abajo {

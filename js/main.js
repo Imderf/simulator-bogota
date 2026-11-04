@@ -6,11 +6,12 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { ssr } from 'three/addons/tsl/display/SSRNode.js';
 import { SunLight } from 'three/addons/lights/SunLight.js';
 import { SunLightNode } from 'three/addons/lights/SunLightNode.js';
-import { vertexColor, texture, uv, mix, vec2, vec3, vec4, float, max, min, uniform, pass, smoothstep, positionWorldDirection, color,
+import { mix, vec2, vec3, vec4, float, max, min, uniform, pass, smoothstep, positionWorldDirection, color,
   mrt, output, normalView, positionView, metalness, roughness, dot, pow, length, screenUV, screenSize, Fn,
   positionWorld, cameraPosition, normalize, exp, abs, pmremTexture, fog } from 'three/tsl';
 import { ZONA, aMundo } from './marco.js';
-import { cargarTerreno, mallaTerreno } from './terreno.js';
+import { cargarTerreno, mallaTerreno, materialTerreno } from './terreno.js';
+import { crearAgua } from './agua.js';
 import { cargarEdificios, mallasEdificios, noche, ALTURA_PISO } from './edificios.js';
 import { cargarArboles, mallasArboles } from './arboles.js';
 import { cargarLineas, mallaVias, texturaSuelo, mojado } from './vias.js';
@@ -133,16 +134,36 @@ const piso = { altura: calles.piso };
 const arbolesEnPie = arboles.filter((a) => !calles.dentro(a.x, a.z, -0.3));
 escena.add(lugares.grupo);
 
-const tex = texturaSuelo(suelo, cajaSuelo);
-const matTerreno = new THREE.MeshStandardNodeMaterial({ roughness: 1 });
-const t = texture(tex, uv());
-matTerreno.colorNode = mix(vertexColor(), t.rgb, t.a);
-const tierra = new THREE.Mesh(mallaTerreno(terreno, tex, cajaSuelo), matTerreno);
+// Suelo: grama, tierra, bosque y roca en los cerros, plazas y parqueaderos según las máscaras de OpenStreetMap.
+const tex = texturaSuelo(suelo, cajaSuelo, { vias, edificios });
+const tierra = new THREE.Mesh(mallaTerreno(terreno, tex, cajaSuelo), materialTerreno(tex));
 tierra.receiveShadow = true;
 escena.add(tierra);
+// Agua que se mueve: estanques, piletas de Las Aguas y el canal del Eje Ambiental.
+const nombresVias = await fetch(DATOS + 'nombres-vias.json').then((r) => r.json()).catch(() => null);
+escena.add(crearAgua({ suelo, terreno, vias, nombresVias }).grupo);
 paso('Levantando edificios', 0);
 await respirar();
-escena.add(mallasEdificios(edificios, terreno, lugares.excluir).grupo);
+const grupoEdificios = mallasEdificios(edificios, terreno, lugares.excluir).grupo;
+escena.add(grupoEdificios);
+// Techo más alto bajo (x, z): un rayo hacia abajo contra edificios y lugares. Así el helicóptero nunca aparece
+// dentro de una torre como la Colpatria.
+const rayoTecho = new THREE.Raycaster(), abajo = new THREE.Vector3(0, -1, 0), origenRayo = new THREE.Vector3();
+function techo(x, z) {
+  rayoTecho.set(origenRayo.set(x, 4000, z), abajo);
+  const g = rayoTecho.intersectObjects([grupoEdificios, lugares.grupo], true)[0];
+  return Math.max(terreno.altura(x, z), g ? g.point.y : -Infinity);
+}
+// En helicóptero, el tour pone la nave a un costado del lugar, mirándolo, y por encima de los techos de alrededor.
+function vueloHacia(p) {
+  const dir = new THREE.Vector3(-0.55, 0, 0.83);
+  if (p.desde && Math.hypot(p.desde[0] - p.x, p.desde[1] - p.z) > 50) dir.set(p.desde[0] - p.x, 0, p.desde[1] - p.z);
+  dir.normalize();
+  const d = Math.max(120, (p.dist ?? 200) * 0.6), x = p.x + dir.x * d, z = p.z + dir.z * d;
+  let alto = -Infinity;
+  for (const [ox, oz] of [[0, 0], [20, 0], [-20, 0], [0, 20], [0, -20]]) alto = Math.max(alto, techo(x + ox, z + oz));
+  return { x, z, y: Math.max(terreno.altura(x, z) + (p.alto ?? 120) * 0.6, alto + 35), rumbo: Math.atan2(-(p.x - x), -(p.z - z)) };
+}
 paso('Plantando árboles', 15);
 await respirar();
 // Los árboles cercanos (con hojas) se rehacen alrededor de la cámara; los lejanos son una versión lisa.
@@ -174,7 +195,7 @@ for (const p of vistas) {
   b.append(texto);
   b.addEventListener('click', () => {
     if (recorrido.modo === 'libre') irA(p);
-    else { recorrido.teletransportar(p.x, p.z); minimapa?.destino(null); }
+    else { recorrido.teletransportar(p.x, p.z, recorrido.modo === 'volar' ? vueloHacia(p) : undefined); minimapa?.destino(null); }
     menu.querySelectorAll('button').forEach((x) => x.classList.toggle('activo', x === b));
     tour.hidePopover();
     document.activeElement?.blur();
@@ -205,13 +226,42 @@ escena.add(transmilenio.grupo);
 // Gente caminando por andenes, la Séptima y la plaza; cuánta depende de la hora.
 const peatones = crearPeatones({ vias, calles, choques, lugares });
 escena.add(peatones.grupo);
+// Botón TransMilenio: lista de estaciones; la cámara vuela a cada una para ver llegar y parar los buses.
+{
+  const lista = document.querySelector('#lista-estaciones'), pop = document.querySelector('#estaciones');
+  const estaciones = new Map();
+  for (const v of transmilenio.vagones) {
+    const e = estaciones.get(v.nombre) || { nombre: v.nombre, x: 0, z: 0, n: 0, rumbo: v.rumbo };
+    e.x += v.x; e.z += v.z; e.n++;
+    estaciones.set(v.nombre, e);
+  }
+  for (const e of [...estaciones.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))) {
+    const li = document.createElement('li'), b = document.createElement('button'), texto = document.createElement('span');
+    // La cámara se para sobre la avenida, a lo largo del carril: de lado los edificios tapan la estación.
+    const x = e.x / e.n, z = e.z / e.n, lx = -Math.sin(e.rumbo), lz = -Math.cos(e.rumbo);
+    texto.textContent = e.nombre;
+    const nota = document.createElement('small');
+    nota.textContent = e.n > 1 ? `${e.n} vagones` : 'Estación sencilla';
+    texto.append(nota);
+    b.append(texto);
+    b.addEventListener('click', () => {
+      if (recorrido.modo !== 'libre') elegirModo('libre');
+      irA({ x, z, dist: 75, alto: 26, desde: [x + lx * 100, z + lz * 100] });
+      lista.querySelectorAll('button').forEach((y) => y.classList.toggle('activo', y === b));
+      pop.hidePopover();
+      document.activeElement?.blur();
+    });
+    li.append(b);
+    lista.append(li);
+  }
+}
 // 1 dentro de una estación, 0 a más de 60 m: para el pitido de puertas y el frenado de los buses.
 const cercaEstacion = (x, z) => Math.max(0, ...transmilenio.vagones.map((v) => 1 - Math.hypot(v.x - x, v.z - z) / 60));
 const [px, pz] = [lugares.centroPlaza[0] + 14, lugares.centroPlaza[1] + 14];
 const catedral = lugares.solidos[0];
 const ccx = catedral.reduce((s, [x]) => s + x, 0) / catedral.length, ccz = catedral.reduce((s, [, z]) => s + z, 0) / catedral.length;
 const recorrido = crearRecorrido({
-  escena, camara, terreno: piso, choques, calles, estacionados, elJoystick: document.querySelector('#joystick'), lienzo: renderer.domElement,
+  escena, camara, terreno: piso, choques, calles, techo, estacionados, elJoystick: document.querySelector('#joystick'), lienzo: renderer.domElement,
   inicio: { x: px, z: pz, rumbo: Math.atan2(-(ccx - px), -(ccz - pz)) }, // mirando hacia la Catedral
 });
 // El Dorado, a 14 km: sabana, pistas, terminal y aviones que llegan y salen según la hora.
@@ -230,7 +280,7 @@ minimapa = await crearMinimapa({
   lugares: vistas.map(({ nombre, nota, x, z }) => ({ nombre, nota, x, z })),
   alIr: (x, z) => {
     if (recorrido.modo === 'libre') irA({ x, z, dist: 260, alto: 120 });
-    else { recorrido.teletransportar(x, z); minimapa.destino(null); }
+    else { recorrido.teletransportar(x, z, recorrido.modo === 'volar' ? vueloHacia({ x, z, dist: 200, alto: 120 }) : undefined); minimapa.destino(null); }
   },
 });
 document.querySelector('#boton-mapa').addEventListener('click', () => minimapa.abrir());

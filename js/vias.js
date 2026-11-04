@@ -215,26 +215,71 @@ function cintas(vias, terreno) {
   return malla;
 }
 
-// Parques, bosques, agua y plazas pintados en un canvas que se proyecta sobre el terreno. No hay imágenes.
-const COLOR_SUELO = ['#5b7a3c', '#3b5330', '#4d6a7a', '#5f8443', '#6c6b67', '#b3a892'];
-export function texturaSuelo(suelo, caja, lado = 2048) {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = lado;
-  const ctx = canvas.getContext('2d');
+// Máscaras del suelo para materialTerreno (terreno.js), pintadas en canvas desde OpenStreetMap. No hay imágenes.
+// r: parque 1, cancha ½ · g: bosque 1, senderos ≤ 0,45 · b: plaza 1, parqueadero ½ · agua: r y b a ½ (lodo bajo el
+// agua) · a: ciudad (cerca de edificios y calles de carros). Cada clase tapa a las anteriores, en el orden de abajo.
+const CODIGO_SUELO = ['#ff0000', '#00ff00', '#800080', '#800000', '#000080', '#0000ff'];
+export function texturaSuelo(suelo, caja, { vias = [], edificios = [], lado = 2048 } = {}) {
+  const lienzo = document.createElement('canvas');
+  lienzo.width = lienzo.height = lado;
+  const ctx = lienzo.getContext('2d');
   const sx = lado / (caja.x1 - caja.x0), sz = lado / (caja.z1 - caja.z0);
+  // Se dibuja en metros del mundo: el marco del lienzo hace la conversión, también de los anchos de línea.
+  const metros = (c, k) => c.setTransform(sx * k, 0, 0, sz * k, -caja.x0 * sx * k, -caja.z0 * sz * k);
+  const trazo = (c, p, cerrar) => { p.forEach(([x, z], i) => c[i ? 'lineTo' : 'moveTo'](x, z)); if (cerrar) c.closePath(); };
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, lado, lado);
+  metros(ctx, 1);
   for (const orden of [0, 1, 3, 4, 5, 2]) {
-    for (const { clase, p } of suelo) {
-      if (clase !== orden) continue;
-      ctx.fillStyle = COLOR_SUELO[clase];
-      ctx.beginPath();
-      p.forEach(([x, z], i) => ctx[i ? 'lineTo' : 'moveTo']((x - caja.x0) * sx, (z - caja.z0) * sz));
-      ctx.closePath();
-      ctx.fill();
-    }
+    ctx.fillStyle = CODIGO_SUELO[orden];
+    // Uno por uno: dos polígonos de la misma clase que se traslapan con giro contrario dejarían un hueco en un solo fill.
+    for (const { clase, p } of suelo) if (clase === orden) { ctx.beginPath(); trazo(ctx, p, true); ctx.fill(); }
   }
-  const t = new THREE.CanvasTexture(canvas);
-  t.colorSpace = THREE.SRGBColorSpace;
+  // Senderos (footway, path, track): tierra, con un halo de pasto pisado. 'lighten' toma el máximo por canal: no borra
+  // el parque de abajo, no se nota dentro del bosque y no se acumula donde se cruzan.
+  ctx.globalCompositeOperation = 'lighten';
+  ctx.lineCap = ctx.lineJoin = 'round';
+  for (const [estilo, extra] of [['#003200', 4], ['#007300', 0]]) {
+    ctx.strokeStyle = estilo;
+    ctx.lineWidth = ANCHO[8] + extra;
+    ctx.beginPath();
+    for (const v of vias) if (v.clase === 8) trazo(ctx, v.p, false);
+    ctx.stroke();
+  }
+  const datos = ctx.getImageData(0, 0, lado, lado).data;
+
+  // Canal a: dónde hay ciudad. Edificios y calles a un cuarto de resolución; al ampliarlos con suavizado quedan
+  // borrosos, y el suelo duro se desvanece hacia el pasto lejos de las casas. Sin edificios todo cuenta como ciudad.
+  const chico = document.createElement('canvas');
+  chico.width = chico.height = lado / 4;
+  const c2 = chico.getContext('2d');
+  c2.fillStyle = edificios.length ? '#000' : '#fff';
+  c2.fillRect(0, 0, lado / 4, lado / 4);
+  metros(c2, 1 / 4);
+  c2.fillStyle = c2.strokeStyle = '#fff';
+  c2.beginPath();
+  for (const e of edificios) trazo(c2, e.anillos[0], true);
+  c2.fill();
+  c2.lineCap = c2.lineJoin = 'round';
+  for (let clase = 0; clase <= 5; clase++) {
+    c2.lineWidth = ANCHO[clase] + 2 * (ANDEN[clase] || 0) + 6;
+    c2.beginPath();
+    for (const v of vias) if (v.clase === clase) trazo(c2, v.p, false);
+    c2.stroke();
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'copy';
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(chico, 0, 0, lado, lado);
+  const ciudad = ctx.getImageData(0, 0, lado, lado).data;
+  for (let k = 3; k < datos.length; k += 4) datos[k] = ciudad[k - 3];
+
+  // Datos, no color: sin espacio de color, con mipmaps para que de lejos se promedien.
+  const t = new THREE.DataTexture(new Uint8Array(datos.buffer), lado, lado);
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
   t.anisotropy = 8;
-  t.flipY = false;
+  t.needsUpdate = true;
   return t;
 }
