@@ -195,7 +195,7 @@ for (const p of vistas) {
   b.append(texto);
   b.addEventListener('click', () => {
     if (recorrido.modo === 'libre') irA(p);
-    else { recorrido.teletransportar(p.x, p.z, recorrido.modo === 'volar' ? vueloHacia(p) : undefined); minimapa?.destino(null); }
+    else { viajar(() => recorrido.teletransportar(p.x, p.z, recorrido.modo === 'volar' ? vueloHacia(p) : undefined)); minimapa?.destino(null); }
     menu.querySelectorAll('button').forEach((x) => x.classList.toggle('activo', x === b));
     tour.hidePopover();
     document.activeElement?.blur();
@@ -253,8 +253,9 @@ escena.add(peatones.grupo);
     texto.append(nota);
     b.append(texto);
     b.addEventListener('click', () => {
-      if (recorrido.modo !== 'libre') elegirModo('libre');
-      irA({ x, z, dist: 75, alto: 26, desde: [x + lx * 100, z + lz * 100] });
+      // En vista libre la cámara vuela a la estación; en los demás modos el jugador aparece junto a ella.
+      if (recorrido.modo === 'libre') irA({ x, z, dist: 75, alto: 26, desde: [x + lx * 100, z + lz * 100] });
+      else viajar(() => recorrido.teletransportar(x, z, recorrido.modo === 'volar' ? vueloHacia({ x, z, dist: 160, alto: 60, desde: [x + lx * 100, z + lz * 100] }) : undefined));
       lista.querySelectorAll('button').forEach((y) => y.classList.toggle('activo', y === b));
       pop.hidePopover();
       document.activeElement?.blur();
@@ -288,7 +289,7 @@ minimapa = await crearMinimapa({
   lugares: vistas.map(({ nombre, nota, x, z }) => ({ nombre, nota, x, z })),
   alIr: (x, z) => {
     if (recorrido.modo === 'libre') irA({ x, z, dist: 260, alto: 120 });
-    else { recorrido.teletransportar(x, z, recorrido.modo === 'volar' ? vueloHacia({ x, z, dist: 200, alto: 120 }) : undefined); minimapa.destino(null); }
+    else { viajar(() => recorrido.teletransportar(x, z, recorrido.modo === 'volar' ? vueloHacia({ x, z, dist: 200, alto: 120 }) : undefined)); minimapa.destino(null); }
   },
 });
 document.querySelector('#boton-mapa').addEventListener('click', () => minimapa.abrir());
@@ -469,6 +470,16 @@ function tablero(dt) {
 }
 
 let ultimaMira = null;
+// Viaje entre lugares en los modos de recorrido (tour, estaciones, atlas): el jugador aparece de una vez en el destino,
+// pero la cámara sale de donde estaba, se aleja hacia arriba, cruza y baja hasta quedar detrás de él, como el vuelo
+// de la vista libre.
+let viaje = null;
+const viajeC = new THREE.Vector3(), viajeT = new THREE.Vector3();
+function viajar(accion) {
+  const t0 = (ultimaMira ?? controles.target).clone(), c0 = camara.position.clone();
+  accion();
+  viaje = { t: 0, t0, c0 };
+}
 const reloj = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(0.05, reloj.getDelta());
@@ -485,6 +496,17 @@ renderer.setAnimationLoop(() => {
   }
   // Con el atlas abierto el jugador no se mueve (la tecla que se tenía apretada no cuenta).
   const mira = minimapa.abierto && recorrido.modo !== 'libre' ? ultimaMira : (ultimaMira = recorrido.actualizar(dt));
+  if (viaje && mira) {
+    // jugador.js dejó la cámara en su sitio final de este cuadro: se mezcla con la de partida y se sube en arco.
+    viaje.t = Math.min(1, viaje.t + dt / 2.4);
+    const k = viaje.t * viaje.t * (3 - 2 * viaje.t);
+    viajeC.copy(camara.position);
+    const d = viaje.c0.distanceTo(viajeC);
+    camara.position.lerpVectors(viaje.c0, viajeC, k);
+    camara.position.y += Math.sin(Math.PI * k) * Math.min(700, Math.max(60, d * 0.35));
+    camara.lookAt(viajeT.lerpVectors(viaje.t0, mira, k));
+    if (viaje.t >= 1) viaje = null;
+  } else if (viaje) viaje = null;
   if (!mira) {
     controles.update();
     const piso = terreno.altura(camara.position.x, camara.position.z) + 8;
