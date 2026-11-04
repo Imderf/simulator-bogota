@@ -64,8 +64,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--acento); ou
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   opacity: 0; transform: translateY(-6px); transition: opacity 0.2s, transform 0.2s, display 0.2s allow-discrete;
 }
-.lista:popover-open { opacity: 1; transform: none; }
-@starting-style { .lista:popover-open { opacity: 0; transform: translateY(-6px); } }
+/* Con id, como la regla que los esconde: si no, la de id gana y el menú abre invisible. */
+#tour:popover-open, #estaciones:popover-open { opacity: 1; transform: none; }
+@starting-style { #tour:popover-open, #estaciones:popover-open { opacity: 0; transform: translateY(-6px); } }
 .tour-titulo { margin: 4px 8px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--suave); }
 #lugares, #lista-estaciones { list-style: none; margin: 0; padding: 0; counter-reset: parada; }
 .lista li button {
