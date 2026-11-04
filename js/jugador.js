@@ -98,7 +98,7 @@ function crearControles(elJoystick) {
 // ---------------------------------------------------------------------------------------------------------------
 // El recorrido: modos, física y cámara.
 // ---------------------------------------------------------------------------------------------------------------
-export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoystick, lienzo, estacionados }) {
+export function crearRecorrido({ escena, camara, terreno, choques, calles, inicio, elJoystick, lienzo, estacionados }) {
   const persona = crearPersonaje();
   escena.add(persona.raiz);
   const controles = crearControles(elJoystick);
@@ -120,7 +120,9 @@ export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoy
   };
 
   const p = { x: inicio.x, z: inicio.z, rumbo: inicio.rumbo, vel: 0 };
-  const c = { x: inicio.x + 9, z: inicio.z + 4, rumbo: inicio.rumbo, vel: 0, giro: 0, rodado: 0,
+  // El taxi del comienzo espera en la calle de carros más cercana (junto a la Plaza de Bolívar, la Carrera 8).
+  const arranque = calles.carril(inicio.x, inicio.z, inicio.rumbo) || { x: inicio.x + 9, z: inicio.z + 4, rumbo: inicio.rumbo };
+  const c = { x: arranque.x, z: arranque.z, rumbo: arranque.rumbo, vel: 0, giro: 0, rodado: 0,
     y: null, vy: 0, cabeceo: 0, alabeo: 0, vCabeceo: 0, vAlabeo: 0 };
   choques.empujar(c, 2.1);
   soltar(v, c.x, c.z, c.rumbo);
@@ -186,14 +188,14 @@ export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoy
       } else if (elegido?.veh) {
         usar(elegido.veh, elegido.veh.pose.x, elegido.veh.pose.z, elegido.veh.pose.rumbo);
       } else {
-        // Si no hay uno al lado, el último carro: a menos de 25 m se sube; si está lejos, aparece junto al personaje.
+        // Si no hay uno al lado, el último carro: a menos de 25 m se sube; si está lejos, aparece en el carril
+        // de la calle de carros más cercana, nunca en una plaza o un andén.
         const { x, z, rumbo } = v.pose || c;
         if (Math.hypot(x - p.x, z - p.z) > 25 || modo === 'volar') {
-          const lado = modo === 'volar' ? 0 : 3; // desde Volar el carro aparece sobre la calle misma
-          const q = { x: p.x + Math.cos(p.rumbo) * lado, z: p.z - Math.sin(p.rumbo) * lado };
+          const q = calles.carril(p.x, p.z, p.rumbo) || { x: p.x, z: p.z, rumbo: p.rumbo };
           tomar(v);
           choques.empujar(q, 2.1);
-          usar(v, q.x, q.z, p.rumbo);
+          usar(v, q.x, q.z, q.rumbo);
         } else usar(v, x, z, rumbo);
       }
       persona.raiz.visible = false;
@@ -240,8 +242,14 @@ export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoy
     c.velAntes = c.vel;
     c.giro += (giro * 0.55 - c.giro) * Math.min(1, dt * 6);
     c.rumbo += (c.vel / (v.largo * 0.62)) * Math.tan(c.giro * (1 - Math.min(0.6, Math.abs(c.vel) / 40))) * dt;
+    const antes = [c.x, c.z];
     c.x -= Math.sin(c.rumbo) * c.vel * dt;
     c.z -= Math.cos(c.rumbo) * c.vel * dt;
+    // Bordillo: si iba por la calzada no puede subirse al andén, a una plaza o a un parque.
+    if (calles.dentro(antes[0], antes[1]) && !calles.dentro(c.x, c.z)) {
+      [c.x, c.z] = antes;
+      c.vel *= -0.2;
+    }
     // Dos círculos (adelante y atrás) cubren la carrocería.
     for (const off of [-v.largo * 0.27, v.largo * 0.27]) {
       const q = { x: c.x - Math.sin(c.rumbo) * off, z: c.z - Math.cos(c.rumbo) * off };

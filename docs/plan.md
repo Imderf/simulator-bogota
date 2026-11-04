@@ -72,6 +72,17 @@ Funcionó al primer intento: sin errores de shader y a 120 cuadros por segundo e
 
 En celular se muestra una pantalla que pide abrirlo en computador o activar «Sitio de escritorio», y no se descarga la ciudad. En modo escritorio el navegador se presenta como de escritorio y el simulador carga normal.
 
+### Noche y calles (2026-11-03, Imderf)
+
+Primeras mejoras tomadas de Slop New York tras la revisión de Imderf (se veía "tipo Minecraft" y la noche casi negra):
+
+- **Noche legible**: postproceso con bloom (`RenderPipeline`), la exposición antes del bloom, luna azul con sombras, relleno azul, cielo nocturno en degradé y el cielo horneado como mapa de entorno (vidrios y metales ya reflejan).
+- **Farolas** (`js/farolas.js`): postes con luminaria LED a lo largo de las vías; de noche las 32 más cercanas alumbran de verdad con `ClusteredLighting` y el resto brilla por el bombillo.
+- **Ventanas sin parpadeo**: bordes suavizados al tamaño del píxel; de lejos se promedian. Luz cálida casi siempre y algunas oficinas con luz fría.
+- **Vías de verdad** (`js/vias.js`): calzada con asfalto y parches, bordes blancos en avenidas, eje amarillo en las de doble sentido, líneas entre carriles en las de un sentido, cebras al llegar a los cruces, andenes con bordillo que se cortan en los cruces y carriles de TransMilenio en concreto.
+- **Datos de vías BOV2**: sentido (`oneway`), carriles (`lanes`) y si son solo de buses (TransMilenio), más las calles peatonales separadas de los senderos. Para rehacer solo las vías: `node tools/construir-centro.mjs vias`.
+- **El carro aparece en la calle** (`js/calles.js`): en el carril derecho de la calle de carros más cercana y en el sentido en que se maneja, nunca en la plaza. Alrededor de la Plaza de Bolívar las calles 10 y 11 y la Séptima son peatonales; el taxi del comienzo queda en la Calle 11, junto a la Catedral. El bordillo no deja subir el carro al andén ni a la plaza.
+
 ## Lo que sigue
 
 1. **Probar en un celular real**: Android e iPhone, con datos móviles.

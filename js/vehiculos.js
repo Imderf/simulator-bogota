@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { vertexColor, float } from 'three/tsl';
 import { noche } from './edificios.js';
+import { anchoVia } from './vias.js';
 
 // Carros armados en código: la carrocería se arma con secciones a lo largo del carro (como costillas) a partir de
 // perfiles de altura y ancho, y se le pegan detalles simples. Solo el exterior: los vidrios son oscuros y no hay
@@ -258,7 +259,6 @@ export function crearVehiculo(tipo, color) {
 // ---------------------------------------------------------------------------------------------------------------
 // Carros estacionados a lado y lado de las calles, dibujados con instancias (pocas llamadas a la GPU).
 // ---------------------------------------------------------------------------------------------------------------
-const ANCHO_VIA = [18, 13, 9, 7, 4.5];
 export function estacionar({ vias, terreno, choques, centro, radio = 1300, maximo = 520, semilla = 7 }) {
   let s = semilla;
   const azar = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
@@ -266,15 +266,16 @@ export function estacionar({ vias, terreno, choques, centro, radio = 1300, maxim
   const peso = { taxi: 0.22, sedan: 0.38, camioneta: 0.28, pickup: 0.12 };
   const lista = [];
   const prueba = { x: 0, z: 0 };
-  for (const { clase, p } of vias) {
-    if (clase < 2 || clase > 3) continue;
+  for (const via of vias) {
+    const { clase, p } = via;
+    if (clase < 2 || clase > 3 || via.bus) continue;
     for (let i = 0; i < p.length - 1 && lista.length < maximo * 3; i++) {
       const [ax, az] = p[i], [bx, bz] = p[i + 1], dx = bx - ax, dz = bz - az, l = Math.hypot(dx, dz);
       if (l < 30 || Math.hypot(ax - centro[0], az - centro[1]) > radio) continue;
       const ux = dx / l, uz = dz / l, nx = -uz, nz = ux;
       for (let d = 12; d < l - 12; d += 6.5 + azar() * 5) {
         if (azar() > 0.42) continue;
-        const lado = azar() < 0.5 ? 1 : -1, off = ANCHO_VIA[clase] / 2 - 1.05;
+        const lado = azar() < 0.5 ? 1 : -1, off = anchoVia(via) / 2 - 1.05;
         const x = ax + ux * d + nx * off * lado, z = az + uz * d + nz * off * lado;
         // Si choca con un muro o un árbol, no cabe.
         prueba.x = x; prueba.z = z;

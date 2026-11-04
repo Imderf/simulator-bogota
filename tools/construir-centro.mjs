@@ -188,7 +188,7 @@ function arboles() {
 // ---------------------------------------------------------------------------------------------------------------
 // Vías y suelo de OpenStreetMap.
 // ---------------------------------------------------------------------------------------------------------------
-export const CLASES_VIA = ['troncal', 'principal', 'secundaria', 'local', 'servicio', 'peatonal', 'ciclorruta', 'escalera'];
+export const CLASES_VIA = ['troncal', 'principal', 'secundaria', 'local', 'servicio', 'peatonal', 'ciclorruta', 'escalera', 'sendero'];
 function claseVia(t) {
   const h = t.highway;
   if (/^(motorway|trunk)(_link)?$/.test(h)) return 0;
@@ -196,13 +196,21 @@ function claseVia(t) {
   if (/^(secondary|tertiary)(_link)?$/.test(h)) return 2;
   if (/^(residential|unclassified|living_street)$/.test(h)) return 3;
   if (h === 'service') return 4;
-  if (/^(pedestrian|footway|path|track)$/.test(h)) return 5;
+  if (h === 'pedestrian') return 5; // calles peatonales, como la Séptima
   if (h === 'cycleway') return 6;
   if (h === 'steps') return 7;
+  if (/^(footway|path|track)$/.test(h)) return 8;
   return -1;
 }
+// Bit 0: un solo sentido. Bit 1: el sentido va al revés del dibujo. Bit 2: solo buses (carriles de TransMilenio).
+function banderasVia(t) {
+  const uno = t.oneway === 'yes' || t.oneway === '1' || t.oneway === '-1' || /^(motorway|trunk)(_link)?$/.test(t.highway) && t.oneway !== 'no';
+  const bus = t.highway === 'busway' || (t.access === 'no' && /^(designated|yes)$/.test(t.bus || t.psv || ''));
+  return (uno ? 1 : 0) | (t.oneway === '-1' ? 2 : 0) | (bus ? 4 : 0);
+}
+const extraVia = (t) => { const n = parseInt(t.lanes, 10); return [banderasVia(t), n > 0 && n < 10 ? n : 0]; };
 
-function lineas(firma, archivo, elementos, clase, cerradas) {
+function lineas(firma, archivo, elementos, clase, cerradas, extra = null) {
   const meta = new Flujo(), xs = new Flujo(), zs = new Flujo();
   const lista = [];
   for (const el of elementos) {
@@ -217,12 +225,13 @@ function lineas(firma, archivo, elementos, clase, cerradas) {
       if (!u || u[0] !== q[0] || u[1] !== q[1]) p.push(q);
     }
     if (cerradas && p.length > 2 && p[0][0] === p[p.length - 1][0] && p[0][1] === p[p.length - 1][1]) p.pop();
-    if (p.length >= (cerradas ? 3 : 2)) lista.push({ c, p });
+    if (p.length >= (cerradas ? 3 : 2)) lista.push({ c, p, e: extra ? extra(el.tags || {}) : [] });
   }
   meta.uint(lista.length);
   let px = 0, pz = 0;
-  for (const { c, p } of lista) {
+  for (const { c, p, e } of lista) {
     meta.uint(c);
+    for (const v of e) meta.uint(v);
     meta.uint(p.length);
     for (const [x, z] of p) { xs.int(x - px); zs.int(z - pz); px = x; pz = z; }
   }
@@ -241,10 +250,14 @@ function claseSuelo(t) {
   return -1;
 }
 
-await terreno();
-edificios();
-arboles();
-lineas('BOV1', 'vias.bin.gz', leer('osm_vias.json').elements, claseVia, false);
-lineas('BOS1', 'suelo.bin.gz', [...leer('osm_suelo.json').elements, ...leer('osm_lugares.json').elements], claseSuelo, true);
+// `node tools/construir-centro.mjs vias` rehace solo las vías (necesita solo osm_vias.json).
+const solo = process.argv[2];
+if (!solo) {
+  await terreno();
+  edificios();
+  arboles();
+}
+if (!solo || solo === 'vias') lineas('BOV2', 'vias.bin.gz', leer('osm_vias.json').elements, claseVia, false, extraVia);
+if (!solo) lineas('BOS1', 'suelo.bin.gz', [...leer('osm_suelo.json').elements, ...leer('osm_lugares.json').elements], claseSuelo, true);
 const total = fs.readdirSync(SALIDA).reduce((s, f) => s + fs.statSync(path.join(SALIDA, f)).size, 0);
 log('total', (total / 1024).toFixed(0), 'KB');

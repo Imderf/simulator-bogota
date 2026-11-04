@@ -1,7 +1,9 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
-import { vertexColor, texture, uv, mix, vec3 } from 'three/tsl';
+import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
+import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { vertexColor, texture, uv, mix, vec3, vec4, float, max, uniform, pass, smoothstep, positionWorldDirection, color } from 'three/tsl';
 import { ZONA, aMundo } from './marco.js';
 import { cargarTerreno, mallaTerreno } from './terreno.js';
 import { cargarEdificios, mallasEdificios, noche, ALTURA_PISO } from './edificios.js';
@@ -12,6 +14,8 @@ import { direccionSol, diaDelAno } from './sol.js';
 import { crearChoques } from './choques.js';
 import { crearRecorrido } from './jugador.js';
 import { estacionar } from './vehiculos.js';
+import { crearFarolas } from './farolas.js';
+import { crearCalles } from './calles.js';
 
 const DATOS = `./datos/${ZONA.nombre}/`;
 const barra = document.querySelector('#carga-barra'), textoCarga = document.querySelector('#carga-texto');
@@ -25,9 +29,11 @@ const renderer = new THREE.WebGPURenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.55;
+renderer.toneMappingExposure = 1; // la exposición va en el postproceso, antes del bloom
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// Muchas luces pequeñas (farolas, faros) sin que cada píxel las recorra todas.
+renderer.lighting = new ClusteredLighting(256, 32, 24, 48);
 document.querySelector('#escena').appendChild(renderer.domElement);
 await renderer.init();
 paso('Preparando la ciudad', 5);
@@ -59,13 +65,27 @@ escena.add(sol, sol.target);
 const relleno = new THREE.HemisphereLight(0xcfe0f5, 0x5d5a50, 1.1);
 escena.add(relleno);
 escena.fog = new THREE.Fog(0xb8c6d4, 2500, 22000);
+// El cielo se hornea como mapa de entorno: sin él, vidrios y metales no reflejan nada y salen negros.
+const pmrem = new THREE.PMREMGenerator(renderer), escenaCielo = new THREE.Scene();
+let entorno = null;
+function hornearCielo() {
+  cielo.showSunDisc.value = 0;
+  escenaCielo.add(cielo);
+  entorno = pmrem.fromScene(escenaCielo, 0, 0.1, 100, { renderTarget: entorno });
+  escena.environment = entorno.texture;
+  escena.environmentIntensity = 0.2;
+  cielo.showSunDisc.value = 1;
+  escena.add(cielo);
+}
+// De noche el cielo físico queda negro: se cambia por un degradé azul oscuro que empata con la niebla.
+escena.backgroundNode = mix(color(0x141c2c), color(0x050a16), smoothstep(0, 0.6, positionWorldDirection.y));
 
 // Datos en paralelo.
 const [terreno, edificios, arboles, vias, suelo, lugaresDatos] = await Promise.all([
   cargarTerreno(DATOS + 'terreno.bin.gz').then((v) => (paso('Relieve listo', 15), v)),
   cargarEdificios(DATOS + 'edificios.bin.gz').then((v) => (paso('Edificios del catastro listos', 20), v)),
   cargarArboles(DATOS + 'arboles.bin.gz').then((v) => (paso('Árboles listos', 10), v)),
-  cargarLineas(DATOS + 'vias.bin.gz', 'BOV1').then((v) => (paso('Vías listas', 5), v)),
+  cargarLineas(DATOS + 'vias.bin.gz', 'BOV2').then((v) => (paso('Vías listas', 5), v)),
   cargarLineas(DATOS + 'suelo.bin.gz', 'BOS1'),
   fetch(DATOS + 'lugares.json').then((r) => r.json()),
 ]);
@@ -134,27 +154,16 @@ const choques = crearChoques(muros, troncos);
 // Carros estacionados en calles secundarias y locales alrededor de la plaza; también suman a los choques.
 const estacionados = estacionar({ vias, terreno, choques, centro: lugares.centroPlaza });
 escena.add(estacionados.grupo);
+const calles = crearCalles(vias);
+const farolas = crearFarolas({ vias, terreno, choques, excluir: lugares.excluir });
+escena.add(farolas.grupo);
 const [px, pz] = [lugares.centroPlaza[0] + 14, lugares.centroPlaza[1] + 14];
 const catedral = lugares.solidos[0];
 const ccx = catedral.reduce((s, [x]) => s + x, 0) / catedral.length, ccz = catedral.reduce((s, [, z]) => s + z, 0) / catedral.length;
 const recorrido = crearRecorrido({
-  escena, camara, terreno, choques, estacionados, elJoystick: document.querySelector('#joystick'), lienzo: renderer.domElement,
+  escena, camara, terreno, choques, calles, estacionados, elJoystick: document.querySelector('#joystick'), lienzo: renderer.domElement,
   inicio: { x: px, z: pz, rumbo: Math.atan2(-(ccx - px), -(ccz - pz)) }, // mirando hacia la Catedral
 });
-// Punto de la vía vehicular más cercana (troncales a calles de servicio), con su dirección.
-function calleCercana(x, z, radio = 250) {
-  let mejor = null, d2 = radio * radio;
-  for (const { clase, p } of vias) {
-    if (clase > 4) continue;
-    for (let i = 0; i < p.length - 1; i++) {
-      const [ax, az] = p[i], [bx, bz] = p[i + 1], dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
-      const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
-      const qx = ax + dx * t, qz = az + dz * t, d = (qx - x) ** 2 + (qz - z) ** 2;
-      if (d < d2) { d2 = d; mejor = { x: qx, z: qz, rumbo: Math.atan2(-dx, -dz) }; }
-    }
-  }
-  return mejor;
-}
 const botonesModo = [...document.querySelectorAll('#modos button')];
 const botonTaxi = document.querySelector('#taxi');
 function elegirModo(m) {
@@ -162,8 +171,9 @@ function elegirModo(m) {
   // Al bajar de Volar, el personaje aparece donde mira la cámara (cerca de la plaza se queda en su punto de partida).
   const lejos = Math.hypot(controles.target.x - px, controles.target.z - pz) > 300;
   if ((m === 'caminar' || m === 'manejar') && antes === 'volar' && (lejos || !primeraVez)) {
-    const calle = calleCercana(controles.target.x, controles.target.z);
-    if (calle) recorrido.llevarA(calle.x, calle.z, calle.rumbo);
+    // A pie aparece en el andén; el carro, en jugador.js, en el carril de la calle más cercana.
+    const anden = calles.anden(controles.target.x, controles.target.z);
+    if (anden) recorrido.llevarA(anden.x, anden.z, anden.rumbo);
     else recorrido.llevarA(controles.target.x, controles.target.z);
   }
   if (antes === 'volar') primeraVez = false;
@@ -189,26 +199,46 @@ addEventListener('keydown', (e) => {
 });
 document.body.dataset.modo = 'volar';
 
+// Postproceso: la exposición va antes del bloom para que su umbral siga el brillo real; ACES se aplica al final.
+// El pico que entra al bloom se limita para que los LED de Colpatria no quemen la imagen.
+const exposicion = uniform(0.6);
+const expuesto = max(pass(escena, camara).getTextureNode('output').rgb, vec3(0)).mul(exposicion);
+const pico = max(max(expuesto.r, expuesto.g), expuesto.b);
+const brillo = bloom(vec4(expuesto.mul(float(8).div(max(pico, 8))), 1), 0.2, 0.4, 1.2);
+brillo.setResolutionScale(0.5);
+const tuberia = new THREE.RenderPipeline(renderer, vec4(expuesto.add(brillo.rgb), 1));
+
 // Hora del día. Arranca con la hora real de Bogotá.
 const control = document.querySelector('#hora'), etiqueta = document.querySelector('#hora-texto');
 const ahora = new Date(), horaBogota = (ahora.getUTCHours() - 5 + 24) % 24 + ahora.getUTCMinutes() / 60;
 control.value = String(Math.round(horaBogota * 4) / 4);
-const dirSol = new THREE.Vector3(), dia = diaDelAno(ahora);
-const C_DIA = new THREE.Color(0xb8c6d4), C_NOCHE = new THREE.Color(0x1a1f2b), cNiebla = new THREE.Color();
+const dirSol = new THREE.Vector3(), dirLuz = new THREE.Vector3(), dia = diaDelAno(ahora);
+// Noche "de cine", como en Slop New York: luna azul con sombras, relleno azul y lo que brilla por encima del bloom.
+const LUNA = new THREE.Vector3(-0.35, 0.82, 0.45).normalize();
+const C_DIA = new THREE.Color(0xb8c6d4), C_NOCHE = new THREE.Color(0x141c2c), cNiebla = new THREE.Color();
+const CIELO = [new THREE.Color(0x2a3c64), new THREE.Color(0xcfe0f5)], SUELO = [new THREE.Color(0x3a3036), new THREE.Color(0x5d5a50)];
+let horneada = null;
 function aplicarHora() {
   const h = Number(control.value);
   etiqueta.textContent = `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
   direccionSol(h, dia, dirSol);
   cielo.sunPosition.value.copy(dirSol);
-  const altura = dirSol.y;
-  const luz = THREE.MathUtils.smoothstep(altura, -0.05, 0.25);
-  sol.intensity = 3.2 * luz;
-  sol.color.setHSL(0.09, 0.6, 0.55 + 0.4 * luz);
-  // De noche queda algo de luz: el resplandor naranja de la ciudad en la bruma deja ver cerros y calles.
-  relleno.intensity = 0.4 + 0.85 * THREE.MathUtils.smoothstep(altura, -0.15, 0.3);
-  noche.value = 1 - THREE.MathUtils.smoothstep(altura, -0.08, 0.12);
-  escena.fog.color.copy(cNiebla.copy(C_NOCHE).lerp(C_DIA, THREE.MathUtils.smoothstep(altura, -0.12, 0.2)));
-  renderer.toneMappingExposure = 0.45 + 0.15 * luz;
+  const altura = dirSol.y, ss = THREE.MathUtils.smoothstep;
+  const luz = ss(altura, -0.05, 0.25), luna = 1 - ss(altura, -0.12, -0.02), claro = ss(altura, -0.15, 0.3);
+  // Cuando el sol se esconde, la misma luz pasa a ser la luna.
+  dirLuz.copy(altura > -0.02 ? dirSol : LUNA);
+  sol.intensity = 3.2 * luz + 0.4 * luna;
+  if (altura > -0.02) sol.color.setHSL(0.09, 0.6, 0.55 + 0.4 * luz); else sol.color.set(0x8cb0e8);
+  relleno.intensity = 0.45 + 0.35 * claro;
+  relleno.color.lerpColors(CIELO[0], CIELO[1], claro);
+  relleno.groundColor.lerpColors(SUELO[0], SUELO[1], claro);
+  noche.value = 1 - ss(altura, -0.08, 0.12);
+  escena.fog.color.copy(cNiebla.copy(C_NOCHE).lerp(C_DIA, ss(altura, -0.12, 0.2)));
+  cielo.visible = altura > -0.1;
+  exposicion.value = 0.48 + 0.37 * (1 - luz);
+  brillo.strength.value = 0.12 + 0.2 * (1 - luz);
+  brillo.threshold.value = 1.0 + 0.4 * luz;
+  if (horneada !== h) { horneada = h; hornearCielo(); }
 }
 control.addEventListener('input', aplicarHora);
 aplicarHora();
@@ -240,10 +270,11 @@ renderer.setAnimationLoop(() => {
   }
   const centroSombra = mira || controles.target;
   cameraPos.value.copy(camara.position);
-  sol.position.copy(centroSombra).addScaledVector(dirSol, 3000);
+  sol.position.copy(centroSombra).addScaledVector(dirLuz, 3000);
   sol.target.position.copy(centroSombra);
   lugares.animar(reloj.elapsedTime);
-  renderer.render(escena, camara);
+  farolas.actualizar(camara);
+  tuberia.render();
 });
 
 // La primera vez cada material compila su shader: se hace antes de quitar la pantalla de carga.
@@ -251,4 +282,4 @@ await renderer.compileAsync(escena, camara);
 paso('Listo', 10);
 document.querySelector('#carga').classList.add('oculta');
 // Para depurar desde la consola del navegador.
-window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados };
+window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados, farolas, calles, vias, exposicion, brillo };

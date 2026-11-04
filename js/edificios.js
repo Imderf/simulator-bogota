@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { attribute, vertexColor, fract, step, floor, hash, mix, vec3, float, uniform } from 'three/tsl';
+import { attribute, vertexColor, fract, step, floor, hash, mix, vec3, float, uniform, fwidth, smoothstep, max } from 'three/tsl';
 import { cargarBinario } from './binario.js';
 
 const Q = 0.5;
@@ -110,16 +110,25 @@ function agregar(c, e, k, terreno) {
 
 // Ventanas por shader: cada 2,8 m a lo ancho y cada piso a lo alto. De noche algunas se encienden.
 export const noche = uniform(0);
+// Franja de a a b dentro de cada celda, con bordes suavizados al tamaño del píxel. De lejos, cuando la celda
+// ocupa menos de un píxel, se queda con su promedio: así las ventanas no parpadean al mover la cámara.
+const franja = (t, w, a, b) =>
+  mix(smoothstep(float(a).sub(w), float(a).add(w), t).sub(smoothstep(float(b).sub(w), float(b).add(w), t)), float(b - a), smoothstep(0.2, 0.5, w));
 function materialFachada() {
   const f = attribute('fachada', 'vec2');
-  const fx = fract(f.x.div(2.8)), fy = fract(f.y.div(ALTURA_PISO));
-  const ventana = step(0.2, fx).mul(step(fx, 0.8)).mul(step(0.32, fy)).mul(step(fy, 0.85)).mul(step(1.0, f.y));
-  const celda = floor(f.x.div(2.8)).add(floor(f.y.div(ALTURA_PISO)).mul(173.0));
-  const encendida = step(0.58, hash(celda));
+  const ux = f.x.div(2.8), uy = f.y.div(ALTURA_PISO), wx = fwidth(ux), wy = fwidth(uy);
+  const ventana = franja(fract(ux), wx, 0.2, 0.8).mul(franja(fract(uy), wy, 0.32, 0.85)).mul(step(1.0, f.y));
+  const celda = floor(ux).add(floor(uy).mul(173.0));
+  const lejos = smoothstep(0.2, 0.5, max(wx, wy));
+  const encendida = mix(step(0.58, hash(celda)), float(0.42), lejos);
+  // Cada cuarto con su bombillo: casi todos cálidos, algunas oficinas con luz fría.
+  const tono = mix(hash(celda.add(17.0)), float(0.5), lejos);
+  const luz = mix(vec3(1.0, 0.76, 0.46), vec3(0.82, 0.9, 1.0), step(0.82, tono)).mul(tono.mul(0.8).add(0.6));
   const vidrio = vec3(0.16, 0.19, 0.23);
   const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.85, metalness: 0.0 });
   m.colorNode = mix(vertexColor(), vidrio, ventana.mul(0.8));
   m.roughnessNode = mix(float(0.88), float(0.25), ventana);
-  m.emissiveNode = vec3(1.0, 0.78, 0.48).mul(ventana).mul(encendida).mul(noche).mul(1.6);
+  // De lejos el promedio se baja a la mitad: si no, la fachada entera se ve color crema en vez de puntos de luz.
+  m.emissiveNode = luz.mul(ventana).mul(encendida).mul(noche).mul(mix(float(1.5), float(0.45), lejos));
   return m;
 }
