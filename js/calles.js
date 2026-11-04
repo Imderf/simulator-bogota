@@ -59,13 +59,16 @@ export function crearCalles(vias, terreno, pisos = []) {
 
   // Altura del piso donde se pisa: las vías van levantadas sobre el terreno y los andenes un bordillo más.
   // Personas, carros y postes se apoyan aquí; si no, quedan hundidos en el pavimento.
+  // La calzada y el andén se dibujan con la altura del eje de la vía, planos de lado a lado: en una calle con
+  // pendiente lateral (La Candelaria) hay que medir en el eje, no en el punto, o la gente queda hundida del lado bajo.
   function piso(x, z) {
-    let extra = 0;
-    recorrer(x, z, 1, (s, d) => {
-      if (d <= s.w) extra = Math.max(extra, s.dy);
-      else if (s.an && d <= s.w + s.an) extra = Math.max(extra, s.dy + BORDILLO);
+    const aqui = terreno.altura(x, z);
+    let y = aqui;
+    recorrer(x, z, 1, (s, d, qx, qz) => {
+      if (d > s.w + s.an) return;
+      const eje = terreno.altura(qx, qz) + s.dy;
+      y = Math.max(y, d <= s.w ? eje : Math.max(eje, aqui + s.dy) + BORDILLO);
     });
-    let y = terreno.altura(x, z) + extra;
     for (const p of pisos) if (adentro([x, z], p.anillo)) y = Math.max(y, p.y);
     return y;
   }
