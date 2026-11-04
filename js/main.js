@@ -93,7 +93,6 @@ function hornearCielo() {
   escenaCielo.add(cielo);
   entorno = pmrem.fromScene(escenaCielo, 0, 0.1, 100, { renderTarget: entorno });
   escena.environment = entorno.texture;
-  escena.environmentIntensity = 0.2;
   cielo.showSunDisc.value = 1;
   escena.add(cielo);
   if (!escena.fogNode) escena.fogNode = nieblaAerea();
@@ -433,17 +432,20 @@ function aplicarHora() {
   dirLuz.copy(altura > -0.02 ? dirSol : LUNA);
   luzSol.intensity = 3.2 * luz + 0.4 * luna;
   if (altura > -0.02) luzSol.color.setHSL(0.09, 0.6, 0.55 + 0.4 * luz); else luzSol.color.set(0x8cb0e8);
-  relleno.intensity = 0.45 + 0.35 * claro;
+  // Golden hour: sol bajo y calles en sombra. Como en Slop New York, el relleno (cielo y entorno) sube para que las
+  // sombras queden azuladas y con detalle en vez de negras.
+  const dorada = ss(altura, -0.02, 0.08) * (1 - ss(altura, 0.25, 0.45));
+  relleno.intensity = 0.45 + 0.35 * claro + 0.55 * dorada;
+  escena.environmentIntensity = 0.2 + 0.45 * dorada + 0.12 * luz;
   relleno.color.lerpColors(CIELO[0], CIELO[1], claro);
   relleno.groundColor.lerpColors(SUELO[0], SUELO[1], claro);
   noche.value = 1 - ss(altura, -0.08, 0.12);
   nocheNiebla.value = 1 - ss(altura, -0.12, 0.05);
   cielo.visible = altura > -0.1;
   // Golden hour: balance cálido; noche: un poco frío. Las calles se mojan hacia la tarde y la noche (Bogotá llueve).
-  const dorada = ss(altura, -0.02, 0.08) * (1 - ss(altura, 0.25, 0.45));
   balance.value.set(1.015, 1, 0.985).lerp(new THREE.Vector3(1.045, 1, 0.955), dorada).lerp(new THREE.Vector3(0.985, 1, 1.035), noche.value);
   mojado.value = 0.1 + 0.2 * dorada + 0.5 * noche.value;
-  exposicion.value = 0.48 + 0.37 * (1 - luz);
+  exposicion.value = 0.48 + 0.37 * (1 - luz) + 0.2 * dorada;
   brillo.strength.value = 0.12 + 0.2 * (1 - luz);
   brillo.threshold.value = 1.0 + 0.4 * luz;
   if (horneada !== h) { horneada = h; hornearCielo(); }
