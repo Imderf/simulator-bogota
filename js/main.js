@@ -25,6 +25,7 @@ import { crearCalles } from './calles.js';
 import { crearMinimapa } from './minimapa.js';
 import { crearSonido } from './sonido.js';
 import { crearTransMilenio } from './transmilenio.js';
+import { crearMobiliario } from './mobiliario.js';
 import { crearPeatones } from './peatones.js';
 import { crearSemaforos } from './semaforos.js';
 import { crearTrafico } from './trafico.js';
@@ -286,6 +287,9 @@ const trafico = crearTrafico({ vias, calles, choques, estacionados, semaforos, p
   return { x, z, modo: recorrido.modo, rumbo: recorrido.rumbo() };
 } });
 escena.add(trafico.grupo);
+// Mobiliario urbano, vallas, pantallas LED y vendedores ambulantes (de día) sobre andenes y plazas.
+const mobiliario = crearMobiliario({ vias, calles, choques, lugares });
+escena.add(mobiliario.grupo);
 // Minimapa tipo GPS abajo a la izquierda, con las placas de las dos calles más cercanas.
 // Con clic o M se abre el Atlas de Bogotá: buscador, zoom y clic para aparecer en ese punto.
 minimapa = await crearMinimapa({
@@ -538,6 +542,7 @@ renderer.setAnimationLoop(() => {
   semaforos.actualizar(dt, camara);
   peatones.actualizar(dt, Number(control.value), camara);
   trafico.actualizar(dt, Number(control.value), camara);
+  mobiliario.actualizar(dt, Number(control.value), camara);
   aeropuerto.actualizar(dt, Number(control.value), camara);
   tuberia.render();
 });
@@ -547,4 +552,4 @@ await renderer.compileAsync(escena, camara);
 paso('Listo', 10);
 document.querySelector('#carga').classList.add('oculta');
 // Para depurar desde la consola del navegador.
-window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados, farolas, calles, vias, transmilenio, peatones, trafico, aeropuerto, arbolesEnPie, exposicion, brillo };
+window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados, farolas, calles, vias, transmilenio, peatones, trafico, mobiliario, aeropuerto, arbolesEnPie, exposicion, brillo };
