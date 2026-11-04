@@ -113,6 +113,10 @@ Publicadas una a una en `zona-centro` (ver los commits para el detalle):
 
 En curso: fachadas al nivel de la referencia (vidrio con cuartos, rejas, avisos, balcones), vendedores ambulantes y mobiliario urbano, semáforos y física entre peatones y tráfico.
 
+### Prioridad para la próxima sesión: tráfico en Monserrate (reporte de Imderf, 2026-11-03)
+
+En la Avenida Carrera 5 Este / Avenida Carrera 5A Este, junto a la estación de abajo del teleférico y el funicular de Monserrate (x ≈ 1.680, z ≈ -520): dos carros (taxi amarillo y sedán blanco) quedan **montados uno sobre otro, lado a lado**, en una vía de doble sentido en pendiente; los carros **saltan** (cambios bruscos de altura) al subir; y la calzada queda como un escalón con el terreno por encima del andén. Revisar en js/trafico.js el desplazamiento de carril por sentido cuando la vía tiene 1 carril o ninguno declarado (los dos sentidos no pueden compartir el mismo carril), el suavizado de la altura de los vehículos sobre calles.piso en pendiente, y en js/vias.js la cinta en curvas cerradas con pendiente.
+
 ## Lo que sigue
 
 1. **Probar en un celular real**: Android e iPhone, con datos móviles.
