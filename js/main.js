@@ -16,6 +16,8 @@ import { crearRecorrido } from './jugador.js';
 import { estacionar } from './vehiculos.js';
 import { crearFarolas } from './farolas.js';
 import { crearCalles } from './calles.js';
+import { crearMinimapa } from './minimapa.js';
+import { crearSonido } from './sonido.js';
 
 const DATOS = `./datos/${ZONA.nombre}/`;
 const barra = document.querySelector('#carga-barra'), textoCarga = document.querySelector('#carga-texto');
@@ -115,9 +117,9 @@ escena.add(mallaVias(vias, terreno));
 paso('Preparando la vista', 10);
 await respirar();
 
-// Menú de lugares: la cámara vuela hasta cada uno.
-const menu = document.querySelector('#lugares');
-let vuelo = null;
+// Tour: en vista libre la cámara vuela hasta cada lugar; en los demás modos el jugador aparece allí.
+const menu = document.querySelector('#lugares'), tour = document.querySelector('#tour');
+let vuelo = null, minimapa = null, transmilenio = null;
 function irA(p, inmediato = false) {
   const y = terreno.altura(p.x, p.z);
   const destinoT = new THREE.Vector3(p.x, y + 20, p.z);
@@ -130,14 +132,19 @@ function irA(p, inmediato = false) {
   vuelo = { t: 0, t0: controles.target.clone(), c0: camara.position.clone(), t1: destinoT, c1: destinoC };
 }
 for (const p of puntosDeVista(lugaresDatos, lugares.centroPlaza)) {
-  const b = document.createElement('button');
-  b.textContent = p.nombre;
+  const li = document.createElement('li'), b = document.createElement('button'), texto = document.createElement('span');
+  texto.textContent = p.nombre;
+  if (p.nota) { const s = document.createElement('small'); s.textContent = p.nota; texto.append(s); }
+  b.append(texto);
   b.addEventListener('click', () => {
-    if (recorrido.modo !== 'volar') elegirModo('volar');
-    irA(p);
+    if (recorrido.modo === 'libre') irA(p);
+    else { recorrido.teletransportar(p.x, p.z); minimapa?.destino(null); }
     menu.querySelectorAll('button').forEach((x) => x.classList.toggle('activo', x === b));
+    tour.hidePopover();
+    document.activeElement?.blur();
   });
-  menu.appendChild(b);
+  li.append(b);
+  menu.append(li);
 }
 irA({ x: lugares.centroPlaza[0], z: lugares.centroPlaza[1], dist: 1400, alto: 650 }, true);
 
@@ -152,52 +159,88 @@ for (const anillo of lugares.solidos) muros.push({ anillo, techo: Infinity });
 const troncos = arboles.filter((a) => a.forma !== 4 && a.alt >= 3).map((a) => [a.x, a.z, a.alt > 12 ? 0.35 : 0.22]);
 const choques = crearChoques(muros, troncos);
 // Carros estacionados en calles secundarias y locales alrededor de la plaza; también suman a los choques.
-const estacionados = estacionar({ vias, terreno, choques, centro: lugares.centroPlaza });
+const calles = crearCalles(vias, terreno);
+// Lo que se apoya en el suelo (carros, personas, postes) usa el piso de las calles, no el del terreno.
+const piso = { altura: calles.piso };
+const estacionados = estacionar({ vias, terreno: piso, choques, centro: lugares.centroPlaza });
 escena.add(estacionados.grupo);
-const calles = crearCalles(vias);
-const farolas = crearFarolas({ vias, terreno, choques, excluir: lugares.excluir });
+const farolas = crearFarolas({ vias, terreno: piso, choques, excluir: lugares.excluir });
 escena.add(farolas.grupo);
 const [px, pz] = [lugares.centroPlaza[0] + 14, lugares.centroPlaza[1] + 14];
 const catedral = lugares.solidos[0];
 const ccx = catedral.reduce((s, [x]) => s + x, 0) / catedral.length, ccz = catedral.reduce((s, [, z]) => s + z, 0) / catedral.length;
 const recorrido = crearRecorrido({
-  escena, camara, terreno, choques, calles, estacionados, elJoystick: document.querySelector('#joystick'), lienzo: renderer.domElement,
+  escena, camara, terreno: piso, choques, calles, estacionados, elJoystick: document.querySelector('#joystick'), lienzo: renderer.domElement,
   inicio: { x: px, z: pz, rumbo: Math.atan2(-(ccx - px), -(ccz - pz)) }, // mirando hacia la Catedral
 });
+// Minimapa tipo GPS abajo a la izquierda, con las placas de las dos calles más cercanas.
+minimapa = await crearMinimapa({ contenedor: document.querySelector('#mapa'), vias, edificios, suelo, datos: DATOS });
+const dirCam = new THREE.Vector3();
 const botonesModo = [...document.querySelectorAll('#modos button')];
-const botonTaxi = document.querySelector('#taxi');
+const botonTaxi = document.querySelector('#taxi'), indicador = document.querySelector('#modos .indicador');
+// La píldora amarilla se desliza hasta el botón del modo activo; en vista libre se esconde.
+function moverIndicador(m) {
+  const b = botonesModo.find((x) => x.dataset.modo === m);
+  indicador.style.setProperty('--visible', b ? 1 : 0);
+  if (b) { indicador.style.setProperty('--x', `${b.offsetLeft}px`); indicador.style.setProperty('--ancho', `${b.offsetWidth}px`); }
+}
 function elegirModo(m) {
   const antes = recorrido.modo;
-  // Al bajar de Volar, el personaje aparece donde mira la cámara (cerca de la plaza se queda en su punto de partida).
+  if (m === antes) return;
+  // Al bajar de la vista libre, el personaje aparece donde mira la cámara (cerca de la plaza se queda en su punto de partida).
   const lejos = Math.hypot(controles.target.x - px, controles.target.z - pz) > 300;
-  if ((m === 'caminar' || m === 'manejar') && antes === 'volar' && (lejos || !primeraVez)) {
+  if (m !== 'libre' && antes === 'libre' && (lejos || !primeraVez)) {
     // A pie aparece en el andén; el carro, en jugador.js, en el carril de la calle más cercana.
     const anden = calles.anden(controles.target.x, controles.target.z);
     if (anden) recorrido.llevarA(anden.x, anden.z, anden.rumbo);
     else recorrido.llevarA(controles.target.x, controles.target.z);
   }
-  if (antes === 'volar') primeraVez = false;
+  if (antes === 'libre') primeraVez = false;
   recorrido.cambiar(m);
   vuelo = null;
-  controles.enabled = m === 'volar';
-  if (m === 'volar') {
+  controles.enabled = m === 'libre';
+  if (m === 'libre') {
     const [x, z] = recorrido.posicion();
     controles.target.set(x, terreno.altura(x, z) + 2, z);
     camara.position.y += 40;
   }
   document.body.dataset.modo = m;
   botonesModo.forEach((b) => b.classList.toggle('activo', b.dataset.modo === m));
+  moverIndicador(m);
   botonTaxi.textContent = m === 'manejar' ? 'Bajarse' : 'Subir al carro';
 }
 let primeraVez = true;
-botonesModo.forEach((b) => b.addEventListener('click', () => elegirModo(b.dataset.modo)));
+botonesModo.forEach((b) => b.addEventListener('click', (e) => {
+  elegirModo(b.dataset.modo);
+  // Sin foco en el botón: si no, Espacio lo vuelve a presionar mientras se maneja.
+  if (e.detail) b.blur();
+}));
 botonTaxi.addEventListener('click', () => elegirModo(recorrido.modo === 'manejar' ? 'caminar' : 'manejar'));
+addEventListener('resize', () => moverIndicador(recorrido.modo));
+const MODOS = ['caminar', 'manejar', 'bici', 'volar'];
 addEventListener('keydown', (e) => {
   if (e.repeat || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
-  if (e.code === 'KeyE' && recorrido.modo !== 'volar') elegirModo(recorrido.modo === 'manejar' ? 'caminar' : 'manejar');
-  if (e.code === 'KeyV') elegirModo(recorrido.modo === 'volar' ? 'caminar' : 'volar');
+  const n = /^Digit([1-4])$/.exec(e.code);
+  if (n) elegirModo(MODOS[n[1] - 1]);
+  if (e.code === 'KeyE' && /caminar|manejar/.test(recorrido.modo)) elegirModo(recorrido.modo === 'manejar' ? 'caminar' : 'manejar');
+  if (e.code === 'KeyV') elegirModo(recorrido.modo === 'libre' ? 'caminar' : 'libre');
+  if (e.code === 'KeyH') document.body.classList.toggle('limpio');
 });
-document.body.dataset.modo = 'volar';
+document.body.dataset.modo = 'libre';
+document.querySelector('#boton-ocultar').addEventListener('click', () => document.body.classList.toggle('limpio'));
+
+// Sonido sintetizado. El navegador solo deja arrancar el audio después de un clic o una tecla.
+const sonido = crearSonido(), botonSonido = document.querySelector('#boton-sonido');
+const marcarSonido = () => botonSonido.setAttribute('aria-pressed', String(!sonido.silenciado));
+addEventListener('pointerdown', sonido.activar, { passive: true });
+addEventListener('keydown', sonido.activar);
+botonSonido.addEventListener('click', () => { sonido.silenciar(!sonido.silenciado); marcarSonido(); });
+addEventListener('keydown', (e) => {
+  if (e.repeat || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+  if (e.code === 'KeyN') { sonido.silenciar(!sonido.silenciado); marcarSonido(); }
+  if (e.code === 'KeyB') sonido.pito();
+});
+marcarSonido();
 
 // Postproceso: la exposición va antes del bloom para que su umbral siga el brillo real; ACES se aplica al final.
 // El pico que entra al bloom se limita para que los LED de Colpatria no quemen la imagen.
@@ -208,10 +251,10 @@ const brillo = bloom(vec4(expuesto.mul(float(8).div(max(pico, 8))), 1), 0.2, 0.4
 brillo.setResolutionScale(0.5);
 const tuberia = new THREE.RenderPipeline(renderer, vec4(expuesto.add(brillo.rgb), 1));
 
-// Hora del día. Arranca con la hora real de Bogotá.
+// Hora del día. Siempre arranca de día (mediodía); los botones de arriba la cambian.
 const control = document.querySelector('#hora'), etiqueta = document.querySelector('#hora-texto');
-const ahora = new Date(), horaBogota = (ahora.getUTCHours() - 5 + 24) % 24 + ahora.getUTCMinutes() / 60;
-control.value = String(Math.round(horaBogota * 4) / 4);
+const ahora = new Date();
+control.value = '12';
 const dirSol = new THREE.Vector3(), dirLuz = new THREE.Vector3(), dia = diaDelAno(ahora);
 // Noche "de cine", como en Slop New York: luna azul con sombras, relleno azul y lo que brilla por encima del bloom.
 const LUNA = new THREE.Vector3(-0.35, 0.82, 0.45).normalize();
@@ -240,8 +283,13 @@ function aplicarHora() {
   brillo.threshold.value = 1.0 + 0.4 * luz;
   if (horneada !== h) { horneada = h; hornearCielo(); }
 }
-control.addEventListener('input', aplicarHora);
+// Horas rápidas (Golden hour, mediodía, hora azul, noche); el deslizador queda para el ajuste fino.
+const botonesHora = [...document.querySelectorAll('#horas button')];
+const marcarHora = () => botonesHora.forEach((b) => b.classList.toggle('activo', Number(b.dataset.hora) === Number(control.value)));
+botonesHora.forEach((b) => b.addEventListener('click', () => { control.value = b.dataset.hora; aplicarHora(); marcarHora(); }));
+control.addEventListener('input', () => { aplicarHora(); marcarHora(); });
 aplicarHora();
+marcarHora();
 
 window.addEventListener('resize', () => {
   camara.aspect = window.innerWidth / window.innerHeight;
@@ -249,9 +297,28 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+// Tablero: qué se maneja, velocidad en km/h y altura en Volar. Cuadros por segundo en el título.
+const NOMBRES = { libre: 'Vista libre', caminar: 'A pie', manejar: 'Taxi', bici: 'Bici urbana', volar: 'Helicóptero turístico' };
+const elVehiculo = document.querySelector('#vehiculo'), elVelocidad = document.querySelector('#velocidad');
+const elAltitud = document.querySelector('#altitud'), elFps = document.querySelector('#fps');
+let cuadros = 0, tFps = 0;
+function tablero(dt) {
+  cuadros++; tFps += dt;
+  if (tFps < 0.25) return;
+  elFps.textContent = Math.round(cuadros / tFps);
+  cuadros = 0; tFps = 0;
+  const m = recorrido.modo;
+  elVehiculo.textContent = m === 'manejar' ? recorrido.nombreCarro() : NOMBRES[m];
+  elVelocidad.textContent = Math.round(Math.abs(recorrido.velocidad()) * 3.6);
+  const [x, z] = recorrido.posicion();
+  const alto = m === 'volar' ? recorrido.altura() - terreno.altura(x, z) : m === 'libre' ? camara.position.y - terreno.altura(camara.position.x, camara.position.z) : 0;
+  elAltitud.textContent = m === 'volar' || m === 'libre' ? `Altura ${Math.round(alto)} m · ${Math.round(2606 + terreno.altura(x, z) + alto)} m s. n. m.` : '';
+}
+
 const reloj = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(0.05, reloj.getDelta());
+  tablero(dt);
   // Con la pestaña o el panel ocultos el lienzo mide 0 y WebGPU no puede crear la imagen.
   if (!renderer.domElement.clientWidth || !renderer.domElement.clientHeight) return;
   if (vuelo) {
@@ -268,6 +335,16 @@ renderer.setAnimationLoop(() => {
     const piso = terreno.altura(camara.position.x, camara.position.z) + 8;
     if (camara.position.y < piso) camara.position.y = piso;
   }
+  camara.getWorldDirection(dirCam);
+  const rumboCam = Math.atan2(-dirCam.x, -dirCam.z), libre = recorrido.modo === 'libre';
+  const [jx, jz] = libre ? [controles.target.x, controles.target.z] : recorrido.posicion();
+  minimapa.actualizar(jx, jz, libre ? rumboCam : recorrido.rumbo(), rumboCam, camara.position.y - terreno.altura(camara.position.x, camara.position.z));
+  const dPlaza = Math.hypot(jx - lugares.centroPlaza[0], jz - lugares.centroPlaza[1]);
+  sonido.actualizar({
+    modo: recorrido.modo, velocidad: recorrido.velocidad(), noche: noche.value, hora: Number(control.value),
+    alto: /caminar|manejar|bici/.test(recorrido.modo) ? 0 : camara.position.y - terreno.altura(camara.position.x, camara.position.z),
+    cercaPlaza: 1 - THREE.MathUtils.smoothstep(dPlaza, 80, 250), enTransMilenio: transmilenio?.cercaEstacion?.(jx, jz) ?? 0,
+  }, dt);
   const centroSombra = mira || controles.target;
   cameraPos.value.copy(camara.position);
   sol.position.copy(centroSombra).addScaledVector(dirLuz, 3000);

@@ -225,7 +225,7 @@ function lineas(firma, archivo, elementos, clase, cerradas, extra = null) {
       if (!u || u[0] !== q[0] || u[1] !== q[1]) p.push(q);
     }
     if (cerradas && p.length > 2 && p[0][0] === p[p.length - 1][0] && p[0][1] === p[p.length - 1][1]) p.pop();
-    if (p.length >= (cerradas ? 3 : 2)) lista.push({ c, p, e: extra ? extra(el.tags || {}) : [] });
+    if (p.length >= (cerradas ? 3 : 2)) lista.push({ c, p, e: extra ? extra(el.tags || {}) : [], nombre: el.tags?.name });
   }
   meta.uint(lista.length);
   let px = 0, pz = 0;
@@ -237,6 +237,7 @@ function lineas(firma, archivo, elementos, clase, cerradas, extra = null) {
   }
   escribir(archivo, empaquetar(firma, [meta, xs, zs]));
   log(lista.length, archivo);
+  return lista;
 }
 
 export const CLASES_SUELO = ['parque', 'bosque', 'agua', 'cancha', 'parqueadero', 'plaza'];
@@ -257,7 +258,14 @@ if (!solo) {
   edificios();
   arboles();
 }
-if (!solo || solo === 'vias') lineas('BOV2', 'vias.bin.gz', leer('osm_vias.json').elements, claseVia, false, extraVia);
+if (!solo || solo === 'vias') {
+  const vias = lineas('BOV2', 'vias.bin.gz', leer('osm_vias.json').elements, claseVia, false, extraVia);
+  // Nombres aparte y en el mismo orden que vias.bin.gz: el binario no cambia y solo los baja quien los usa (minimapa).
+  // `via[k]` es el índice en `nombres` de la vía k, o -1 si no tiene nombre.
+  const nombres = [...new Set(vias.map((v) => v.nombre).filter(Boolean))];
+  const indice = new Map(nombres.map((n, i) => [n, i]));
+  escribir('nombres-vias.json', Buffer.from(JSON.stringify({ nombres, via: vias.map((v) => indice.get(v.nombre) ?? -1) })));
+}
 if (!solo) lineas('BOS1', 'suelo.bin.gz', [...leer('osm_suelo.json').elements, ...leer('osm_lugares.json').elements], claseSuelo, true);
 const total = fs.readdirSync(SALIDA).reduce((s, f) => s + fs.statSync(path.join(SALIDA, f)).size, 0);
 log('total', (total / 1024).toFixed(0), 'KB');

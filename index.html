@@ -41,33 +41,77 @@
 <body>
   <div id="escena"></div>
 
-  <header id="titulo">
+  <!-- Iconos: un solo sprite, cada botón lo usa con <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-dorada" viewBox="0 0 24 24"><path d="M3 18h18M6 18a6 6 0 0 1 12 0M12 6v2M5.6 9.6l1.4 1.4M18.4 9.6 17 11M2 14h2M20 14h2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-sol" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-azul" viewBox="0 0 24 24"><path d="M3 17h18M3 21h18M7 13a5 5 0 0 1 10 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="18" cy="5" r="1.2" fill="currentColor"/></symbol>
+    <symbol id="i-luna" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="9.5" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+    <symbol id="i-sonido" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path class="ondas" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path class="tachado" d="M16 9l6 6M22 9l-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-ojo" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+    <symbol id="i-caminar" viewBox="0 0 24 24"><circle cx="13" cy="4" r="2" fill="currentColor"/><path d="m9 21 2.5-6 2.5 2v4M8 11l3-3h3l2 4 3 1M11 8l-1 5 4 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-carro" viewBox="0 0 24 24"><path d="M4 16v-4l2-5h12l2 5v4M3 16h18v2H3zM4 12h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="7.5" cy="18.5" r="1.5" fill="currentColor"/><circle cx="16.5" cy="18.5" r="1.5" fill="currentColor"/></symbol>
+    <symbol id="i-bici" viewBox="0 0 24 24"><circle cx="5.5" cy="16.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="18.5" cy="16.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 16.5 9 9h6l3.5 7.5M9 9l3 7.5 3-7.5M8 6h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-helicoptero" viewBox="0 0 24 24"><path d="M3 5h14M10 5v3M6 11a4 3 0 0 1 4-3h3a4 4 0 0 1 4 4v1a2 2 0 0 1-2 2H9a3 3 0 0 1-3-3zM17 12h4l1-3M8 18h9M10 15v3M15 15v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-flecha" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <header id="titulo" class="panel">
     <h1>Simulador Bogotá</h1>
-    <p>Zona Centro · datos abiertos de Bogotá y OpenStreetMap</p>
+    <p>Zona Centro · datos abiertos de Bogotá y OpenStreetMap · <output id="fps">–</output> fps</p>
   </header>
 
-  <nav id="lugares" aria-label="Lugares"></nav>
-
-  <nav id="modos" aria-label="Modo">
-    <button data-modo="volar" class="activo">Volar</button>
-    <button data-modo="caminar">Caminar</button>
-    <button data-modo="manejar">Manejar</button>
+  <nav id="barra" class="panel" aria-label="Hora, tour y sonido">
+    <div id="horas" role="group" aria-label="Hora del día">
+      <button data-hora="17.25" title="Golden hour, 17:15"><svg><use href="#i-dorada" /></svg><span>Golden hour</span></button>
+      <button data-hora="12" title="Mediodía, 12:00"><svg><use href="#i-sol" /></svg><span>Mediodía</span></button>
+      <button data-hora="18.25" title="Hora azul, 18:15"><svg><use href="#i-azul" /></svg><span>Hora azul</span></button>
+      <button data-hora="21" title="Noche, 21:00"><svg><use href="#i-luna" /></svg><span>Noche</span></button>
+    </div>
+    <div id="reloj">
+      <input id="hora" type="range" min="0" max="23.75" step="0.25" value="15" aria-label="Hora exacta" />
+      <output id="hora-texto">15:00</output>
+    </div>
+    <span class="divisor" aria-hidden="true"></span>
+    <button id="boton-tour" popovertarget="tour" aria-label="Tour por los lugares"><svg><use href="#i-pin" /></svg><span>Tour</span><svg class="chico"><use href="#i-flecha" /></svg></button>
+    <button id="boton-sonido" class="icono" aria-pressed="false" title="Sonido (N)" aria-label="Sonido"><svg><use href="#i-sonido" /></svg></button>
+    <button id="boton-ocultar" class="icono" title="Ocultar la interfaz (H)" aria-label="Ocultar la interfaz"><svg><use href="#i-ojo" /></svg></button>
   </nav>
 
-  <p id="ayuda">
-    <span class="solo-caminar">W A S D o flechas · Shift para correr · E para subirse al carro más cercano · V para volar</span>
-    <span class="solo-manejar">W acelera · S frena y retrocede · A D giran · Espacio frena · E para bajarse</span>
-  </p>
+  <div id="tour" popover>
+    <p class="tour-titulo">Tour por el Centro</p>
+    <ol id="lugares"></ol>
+  </div>
+
+  <div id="abajo">
+    <p id="ayuda">
+      <span class="solo-libre">Arrastra para girar · rueda para acercar · 1 a 4 para recorrer la ciudad</span>
+      <span class="solo-caminar"><kbd>W</kbd><kbd>S</kbd> caminar · <kbd>A</kbd><kbd>D</kbd> girar · <kbd>Shift</kbd> correr · <kbd>E</kbd> subir al carro · <kbd>V</kbd> vista libre</span>
+      <span class="solo-manejar"><kbd>W</kbd><kbd>S</kbd> acelerar y frenar · <kbd>A</kbd><kbd>D</kbd> girar · <kbd>Espacio</kbd> freno · <kbd>B</kbd> pito · <kbd>E</kbd> bajarse</span>
+      <span class="solo-bici"><kbd>W</kbd><kbd>S</kbd> pedalear y frenar · <kbd>A</kbd><kbd>D</kbd> girar · <kbd>Shift</kbd> más rápido</span>
+      <span class="solo-volar"><kbd>W</kbd><kbd>S</kbd> adelante y atrás · <kbd>A</kbd><kbd>D</kbd> girar · <kbd>Espacio</kbd><kbd>E</kbd> subir · <kbd>Q</kbd><kbd>C</kbd> bajar</span>
+    </p>
+    <nav id="modos" class="panel" aria-label="Cómo recorrer">
+      <span class="indicador" aria-hidden="true"></span>
+      <button data-modo="caminar"><svg><use href="#i-caminar" /></svg><span>Caminar</span><kbd>1</kbd></button>
+      <button data-modo="manejar"><svg><use href="#i-carro" /></svg><span>Manejar</span><kbd>2</kbd></button>
+      <button data-modo="bici"><svg><use href="#i-bici" /></svg><span>Bici</span><kbd>3</kbd></button>
+      <button data-modo="volar"><svg><use href="#i-helicoptero" /></svg><span>Volar</span><kbd>4</kbd></button>
+    </nav>
+  </div>
+
+  <div id="tablero" class="panel" aria-live="off">
+    <p id="vehiculo">Vista libre</p>
+    <p class="velocidad"><output id="velocidad">0</output><span>km/h</span></p>
+    <p id="altitud"></p>
+  </div>
+
+  <div id="mapa"></div>
 
   <div id="tactil">
     <div id="joystick" aria-hidden="true"><span></span></div>
     <button id="taxi">Subir al carro</button>
-  </div>
-
-  <div id="reloj">
-    <label for="hora">Hora</label>
-    <input id="hora" type="range" min="0" max="23.75" step="0.25" value="15" />
-    <output id="hora-texto">15:00</output>
   </div>
 
   <div id="carga">

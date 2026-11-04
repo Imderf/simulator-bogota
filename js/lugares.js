@@ -592,18 +592,27 @@ export function construirLugares(datos, terreno, edificios) {
 
 // Puntos para el menú de lugares. La cámara se para del lado de `desde` (por defecto, la Plaza de Bolívar),
 // a `dist` metros del objetivo y `alto` metros por encima del suelo.
+// Paradas del tour, en orden de recorrido a pie desde la Plaza de Bolívar hasta el norte. Coordenadas de los
+// lugares nuevos: centro de su polígono o nodo en OpenStreetMap. Guadalupe, Bacatá y Avianca siguen en la ciudad
+// pero salen del menú: no son paradas de un recorrido turístico.
 export function puntosDeVista(datos, centroPlaza) {
   const centro = (k) => rectangulo(datos[k].anillos[0]);
-  const v = (k, nombre, dist, alto, extra = {}) => { const r = centro(k); return { nombre, x: r.cx, z: r.cz, dist, alto, desde: centroPlaza, ...extra }; };
+  const v = (k, nombre, nota, dist, alto, extra = {}) => { const r = centro(k); return { nombre, nota, x: r.cx, z: r.cz, dist, alto, desde: centroPlaza, ...extra }; };
+  const p = (x, z, nombre, nota, dist, alto, extra = {}) => ({ nombre, nota, x, z, dist, alto, ...extra });
   return [
-    { nombre: 'Plaza de Bolívar', x: centroPlaza[0], z: centroPlaza[1], dist: 260, alto: 120 },
-    v('basilicaMonserrate', 'Monserrate', 300, 90),
-    v('colpatria', 'Torre Colpatria', 480, 200),
-    { nombre: 'BD Bacatá', x: 640, z: -760, dist: 520, alto: 330, desde: centroPlaza },
-    v('torreA', 'Torres del Parque', 380, 160),
-    v('santamaria', 'La Santamaría', 260, 140),
-    v('catedral', 'Catedral Primada', 170, 45),
-    v('guadalupe', 'Guadalupe', 170, 60),
-    { nombre: 'La Candelaria', x: 450, z: 80, dist: 420, alto: 260 },
+    p(centroPlaza[0], centroPlaza[1], 'Plaza de Bolívar', 'Catedral, Capitolio, Liévano y Palacio de Justicia', 260, 120),
+    p(-164, 293, 'Casa de Nariño', 'Palacio presidencial y cambio de guardia', 220, 90, { desde: centroPlaza }),
+    p(184, 156, 'Teatro Colón', 'Teatro nacional de 1892', 170, 70),
+    p(334, 132, 'Museo Botero y Luis Ángel Arango', 'Manzana cultural del Banco de la República', 210, 95),
+    p(703, 103, 'Chorro de Quevedo', 'Donde se fundó Bogotá en 1538', 160, 70),
+    p(450, 80, 'La Candelaria', 'Casas coloniales, teja y grafiti', 420, 260),
+    p(352, -380, 'Museo del Oro', 'Parque Santander e Iglesia de San Francisco', 230, 95),
+    p(620, -440, 'Eje Ambiental', 'Avenida Jiménez y su canal de agua', 260, 90),
+    p(1472, -501, 'Quinta de Bolívar', 'Casa museo al pie de Monserrate', 210, 90),
+    v('basilicaMonserrate', 'Monserrate', 'Teleférico, funicular y vista de la ciudad', 300, 90),
+    v('colpatria', 'Torre Colpatria', 'Mirador y fachada de LED', 480, 200),
+    v('museoNacional', 'Museo Nacional', 'Antiguo Panóptico', 230, 95),
+    v('planetario', 'Planetario', 'Parque de la Independencia', 260, 120),
+    v('torreA', 'Torres del Parque', 'Salmona y La Santamaría', 380, 160),
   ];
 }

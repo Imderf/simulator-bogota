@@ -56,7 +56,7 @@ export function crearFarolas({ vias, terreno, choques, excluir = () => false }) 
   const bombillos = new THREE.InstancedMesh(bombillo, matBombillo, sitios.length);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), uno = new THREE.Vector3(1, 1, 1), pos = new THREE.Vector3();
   sitios.forEach((s, i) => {
-    m4.compose(pos.set(s.x, s.y - 0.1, s.z), q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, s.rumbo), uno);
+    m4.compose(pos.set(s.x, s.y - 0.02, s.z), q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, s.rumbo), uno);
     postes.setMatrixAt(i, m4);
     bombillos.setMatrixAt(i, m4);
   });

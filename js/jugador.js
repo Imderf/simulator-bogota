@@ -1,58 +1,11 @@
 import * as THREE from 'three/webgpu';
 import { noche } from './edificios.js';
 import { crearVehiculo, TIPOS } from './vehiculos.js';
+import { crearBici, moverBici } from './bici.js';
+import { crearHelicoptero, moverHelicoptero } from './helicoptero.js';
+import { crearPersonaje } from './personaje.js';
 
-// Recorrer la ciudad a pie o en carro. El personaje se arma con piezas simples y los carros salen de vehiculos.js:
-// no hay modelos.
-
-const mat = (color, extra = {}) => new THREE.MeshStandardNodeMaterial({ color, roughness: 0.8, ...extra });
-const pieza = (geo, material, x, y, z, padre) => {
-  const m = new THREE.Mesh(geo, material);
-  m.position.set(x, y, z);
-  m.castShadow = true;
-  padre.add(m);
-  return m;
-};
-
-// ---------------------------------------------------------------------------------------------------------------
-// Personaje: unos 1,72 m. Piernas y brazos cuelgan de pivotes para animar el paso.
-// ---------------------------------------------------------------------------------------------------------------
-function crearPersonaje() {
-  const raiz = new THREE.Group();
-  raiz.name = 'Personaje';
-  const piel = mat(0xb8835a), jean = mat(0x2f3e5a), chaqueta = mat(0x7a2e2a), zapato = mat(0x1d1b19), pelo = mat(0x1e1712);
-  const cuerpo = new THREE.Group();
-  raiz.add(cuerpo);
-  pieza(new THREE.BoxGeometry(0.42, 0.56, 0.24), chaqueta, 0, 1.2, 0, cuerpo);
-  pieza(new THREE.BoxGeometry(0.4, 0.14, 0.22), jean, 0, 0.88, 0, cuerpo);
-  pieza(new THREE.CylinderGeometry(0.055, 0.06, 0.08, 8), piel, 0, 1.52, 0, cuerpo);
-  const cabeza = pieza(new THREE.SphereGeometry(0.115, 14, 10), piel, 0, 1.63, 0, cuerpo);
-  cabeza.scale.set(1, 1.12, 1.05);
-  pieza(new THREE.SphereGeometry(0.12, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), pelo, 0, 1.66, 0.01, cuerpo);
-  const extremidad = (x, y, largo, ancho, material, punta, colorPunta) => {
-    const pivote = new THREE.Group();
-    pivote.position.set(x, y, 0);
-    cuerpo.add(pivote);
-    pieza(new THREE.BoxGeometry(ancho, largo, ancho), material, 0, -largo / 2, 0, pivote);
-    if (punta) pieza(punta, colorPunta, 0, -largo - 0.03, -0.04, pivote); // el frente es -z
-    return pivote;
-  };
-  const piernaI = extremidad(-0.1, 0.84, 0.8, 0.15, jean, new THREE.BoxGeometry(0.14, 0.07, 0.26), zapato);
-  const piernaD = extremidad(0.1, 0.84, 0.8, 0.15, jean, new THREE.BoxGeometry(0.14, 0.07, 0.26), zapato);
-  const brazoI = extremidad(-0.27, 1.45, 0.62, 0.11, chaqueta, new THREE.SphereGeometry(0.055, 8, 6), piel);
-  const brazoD = extremidad(0.27, 1.45, 0.62, 0.11, chaqueta, new THREE.SphereGeometry(0.055, 8, 6), piel);
-  let fase = 0;
-  const animar = (velocidad, dt) => {
-    fase += dt * (2.2 + velocidad * 2.4);
-    const amplitud = Math.min(0.75, velocidad * 0.32);
-    piernaI.rotation.x = Math.sin(fase) * amplitud;
-    piernaD.rotation.x = -Math.sin(fase) * amplitud;
-    brazoI.rotation.x = -Math.sin(fase) * amplitud * 0.8;
-    brazoD.rotation.x = Math.sin(fase) * amplitud * 0.8;
-    cuerpo.position.y = Math.abs(Math.sin(fase)) * amplitud * 0.06;
-  };
-  return { raiz, animar };
-}
+// Recorrer la ciudad a pie, en carro, en bici o en helicóptero. Todo se arma en código: no hay modelos.
 
 // ---------------------------------------------------------------------------------------------------------------
 // Controles: teclado y joystick táctil. Devuelven avance (-1 a 1), giro (-1 a 1) y correr.
@@ -89,7 +42,8 @@ function crearControles(elJoystick) {
       let avance = (t('KeyW', 'ArrowUp') ? 1 : 0) - (t('KeyS', 'ArrowDown') ? 1 : 0);
       let giro = (t('KeyA', 'ArrowLeft') ? 1 : 0) - (t('KeyD', 'ArrowRight') ? 1 : 0);
       if (toque.activo) { avance = -toque.y; giro = -toque.x; }
-      return { avance, giro, correr: t('ShiftLeft', 'ShiftRight') || Math.hypot(toque.x, toque.y) > 0.92, freno: t('Space') };
+      return { avance, giro, correr: t('ShiftLeft', 'ShiftRight') || Math.hypot(toque.x, toque.y) > 0.92, freno: t('Space'),
+        subir: t('Space', 'KeyE'), bajar: t('KeyQ', 'KeyC') };
     },
     teclas,
   };
@@ -126,12 +80,34 @@ export function crearRecorrido({ escena, camara, terreno, choques, calles, inici
     y: null, vy: 0, cabeceo: 0, alabeo: 0, vCabeceo: 0, vAlabeo: 0 };
   choques.empujar(c, 2.1);
   soltar(v, c.x, c.z, c.rumbo);
-  let modo = 'volar';
+  // Bici y helicóptero: como el carro, cada uno se queda donde se dejó. Aparecen junto al jugador la primera vez
+  // o si quedaron lejos.
+  const bici = crearBici(), heli = crearHelicoptero();
+  bici.raiz.visible = heli.raiz.visible = false;
+  escena.add(bici.raiz, heli.raiz);
+  const b = { x: 0, z: 0, rumbo: 0, vel: 0, giro: 0, inclinacion: 0, puesta: false };
+  const h = { x: 0, y: 0, z: 0, rumbo: 0, vel: 0, velY: 0, cabeceo: 0, alabeo: 0, puesto: false };
+  let potencia = 0;
+  let modo = 'libre';
   const camPos = new THREE.Vector3(), mira = new THREE.Vector3();
   const colocar = () => {
-    persona.raiz.position.set(p.x, terreno.altura(p.x, p.z), p.z);
-    persona.raiz.rotation.y = p.rumbo;
+    // En la bici el personaje va montado: su raíz cuelga de la bici.
+    if (modo !== 'bici') {
+      persona.raiz.position.set(p.x, terreno.altura(p.x, p.z), p.z);
+      persona.raiz.rotation.set(0, p.rumbo, 0);
+    }
     colocarTaxi();
+  };
+  const colocarBici = () => {
+    // Inclinación según el suelo bajo las dos ruedas (ejes a 0,62 m adelante y 0,44 m atrás).
+    const s = Math.sin(b.rumbo), co = Math.cos(b.rumbo);
+    const yD = terreno.altura(b.x - s * 0.62, b.z - co * 0.62), yT = terreno.altura(b.x + s * 0.44, b.z + co * 0.44);
+    bici.raiz.position.set(b.x, terreno.altura(b.x, b.z), b.z);
+    bici.raiz.rotation.set(Math.atan2(yD - yT, 1.06), b.rumbo, b.inclinacion, 'YXZ');
+  };
+  const colocarHeli = () => {
+    heli.raiz.position.set(h.x, h.y, h.z);
+    heli.raiz.rotation.set(h.cabeceo, h.rumbo, h.alabeo, 'YXZ');
   };
   // Suspensión: se mide el suelo bajo las cuatro ruedas y la carrocería lo sigue con resortes amortiguados,
   // así se inclina en las lomas de La Candelaria y rebota un poco al frenar o al cambiar de pendiente.
@@ -167,11 +143,39 @@ export function crearRecorrido({ escena, camara, terreno, choques, calles, inici
 
   function cambiar(nuevo) {
     if (nuevo === modo) return modo;
+    // Al dejar la bici o el helicóptero, la persona queda al lado (bajo el helicóptero, en el andén más cercano).
+    if (modo === 'bici') {
+      escena.add(persona.raiz);
+      persona.pararse();
+      p.x = b.x - Math.cos(b.rumbo) * 0.9; p.z = b.z + Math.sin(b.rumbo) * 0.9; p.rumbo = b.rumbo; p.vel = 0;
+      choques.empujar(p, 0.35);
+    } else if (modo === 'volar') {
+      const a = calles.anden(h.x, h.z, 120) || { x: h.x + 4, z: h.z, rumbo: h.rumbo };
+      p.x = a.x; p.z = a.z; p.rumbo = a.rumbo; p.vel = 0;
+      choques.empujar(p, 0.35);
+    }
+    if (nuevo === 'bici') {
+      if (!b.puesta || Math.hypot(b.x - p.x, b.z - p.z) > 25) Object.assign(b, { x: p.x, z: p.z, rumbo: p.rumbo, puesta: true });
+      Object.assign(b, { vel: 0, giro: 0, inclinacion: 0 });
+      bici.raiz.visible = true;
+      bici.raiz.add(persona.raiz);
+      persona.raiz.position.set(0, 0, 0);
+      persona.raiz.rotation.set(0, 0, 0);
+      colocarBici();
+    } else if (nuevo === 'volar') {
+      // Aparece flotando a 60 m sobre el jugador; si ya estaba cerca, sigue donde se dejó.
+      if (!h.puesto || Math.hypot(h.x - p.x, h.z - p.z) > 400) {
+        Object.assign(h, { x: p.x, z: p.z, y: terreno.altura(p.x, p.z) + 60, rumbo: p.rumbo, puesto: true });
+      }
+      Object.assign(h, { vel: 0, velY: 0 });
+      heli.raiz.visible = true;
+      colocarHeli();
+    }
     if (nuevo === 'manejar') {
       // Se sube al carro más cercano a menos de 4,5 m: uno estacionado o uno que dejó antes.
       let elegido = null, dmin = 4.5;
       const dist = (x, z) => Math.hypot(x - p.x, z - p.z);
-      if (modo !== 'volar') {
+      if (modo !== 'libre') {
         for (const veh of sueltos) { const d = dist(veh.pose.x, veh.pose.z); if (d < dmin) { dmin = d; elegido = { veh }; } }
         for (const e of estacionados?.lista || []) {
           if (e.oculto) continue;
@@ -191,7 +195,7 @@ export function crearRecorrido({ escena, camara, terreno, choques, calles, inici
         // Si no hay uno al lado, el último carro: a menos de 25 m se sube; si está lejos, aparece en el carril
         // de la calle de carros más cercana, nunca en una plaza o un andén.
         const { x, z, rumbo } = v.pose || c;
-        if (Math.hypot(x - p.x, z - p.z) > 25 || modo === 'volar') {
+        if (Math.hypot(x - p.x, z - p.z) > 25 || modo === 'libre') {
           const q = calles.carril(p.x, p.z, p.rumbo) || { x: p.x, z: p.z, rumbo: p.rumbo };
           tomar(v);
           choques.empujar(q, 2.1);
@@ -206,7 +210,7 @@ export function crearRecorrido({ escena, camara, terreno, choques, calles, inici
       choques.empujar(p, 0.35);
       c.vel = 0;
     }
-    if (nuevo !== 'manejar') persona.raiz.visible = true;
+    persona.raiz.visible = nuevo !== 'manejar' && nuevo !== 'volar';
     modo = nuevo;
     camPos.copy(camara.position);
     colocar();
@@ -216,8 +220,24 @@ export function crearRecorrido({ escena, camara, terreno, choques, calles, inici
   function actualizar(dt) {
     const n = noche.value;
     v.luz.intensity = modo === 'manejar' ? n * 40 : 0;
-    if (modo === 'volar') return null;
-    const { avance, giro, correr, freno } = controles.leer();
+    // Fuera de su modo el helicóptero deja girar las palas en vacío si quedó en el aire.
+    heli.animar(dt, modo === 'volar' ? potencia : h.y - terreno.altura(h.x, h.z) > 2 ? 0.5 : 0);
+    if (modo === 'libre') return null;
+    const entrada = controles.leer(), { avance, giro, correr, freno } = entrada;
+
+    if (modo === 'bici') {
+      moverBici(b, entrada, dt);
+      choques.empujar(b, 0.45);
+      colocarBici();
+      persona.pedalear(bici.animar(b.vel, dt) + Math.PI, b.inclinacion); // la bici cuenta la fase desde el pedal derecho; el ciclista, desde el izquierdo
+      return seguir(b.x, b.z, b.rumbo, 4.8, 2.0, 1.3, dt);
+    }
+
+    if (modo === 'volar') {
+      potencia = moverHelicoptero(h, entrada, dt, terreno.altura);
+      colocarHeli();
+      return seguir(h.x, h.z, h.rumbo, 12 + Math.abs(h.vel) * 0.12, 3.5, 1.6, dt, h.y);
+    }
 
     if (modo === 'caminar') {
       const objetivo = avance * (correr ? 4.2 : 1.6);
@@ -271,7 +291,7 @@ export function crearRecorrido({ escena, camara, terreno, choques, calles, inici
   // Arrastrar sobre la escena gira la cámara alrededor; al soltar vuelve sola detrás.
   const vista = { yaw: 0, alto: 0, arrastrando: false, px: 0, py: 0 };
   lienzo.addEventListener('pointerdown', (e) => {
-    if (modo === 'volar' || e.target !== lienzo) return;
+    if (modo === 'libre' || e.target !== lienzo) return;
     vista.arrastrando = true; vista.px = e.clientX; vista.py = e.clientY;
   });
   addEventListener('pointermove', (e) => {
@@ -284,12 +304,12 @@ export function crearRecorrido({ escena, camara, terreno, choques, calles, inici
 
   // Cámara detrás, suavizada. Si un muro se interpone, se acerca; si queda bajo el terreno, sube.
   const deseo = new THREE.Vector3();
-  function seguir(x, z, rumbo, dist, alto, mirarAlto, dt) {
+  function seguir(x, z, rumbo, dist, alto, mirarAlto, dt, yBase = terreno.altura(x, z)) {
     if (!vista.arrastrando) {
       vista.yaw *= Math.exp(-dt * 1.5);
       vista.alto *= Math.exp(-dt * 1.5);
     }
-    const y = terreno.altura(x, z), a = rumbo + vista.yaw;
+    const y = yBase, a = rumbo + vista.yaw;
     mira.set(x, y + mirarAlto, z);
     const h = alto * (1 + vista.alto);
     deseo.set(x + Math.sin(a) * dist, y + h, z + Math.cos(a) * dist);
@@ -307,8 +327,31 @@ export function crearRecorrido({ escena, camara, terreno, choques, calles, inici
   return {
     cambiar, actualizar,
     get modo() { return modo; },
-    posicion: () => (modo === 'manejar' ? [c.x, c.z] : [p.x, p.z]),
+    posicion: () => (modo === 'manejar' ? [c.x, c.z] : modo === 'bici' ? [b.x, b.z] : modo === 'volar' ? [h.x, h.z] : [p.x, p.z]),
+    rumbo: () => (modo === 'manejar' ? c.rumbo : modo === 'bici' ? b.rumbo : modo === 'volar' ? h.rumbo : p.rumbo),
+    velocidad: () => ({ manejar: c.vel, caminar: p.vel, bici: b.vel, volar: Math.hypot(h.vel, h.velY) })[modo] ?? 0,
+    altura: () => (modo === 'manejar' ? c.y ?? 0 : modo === 'volar' ? h.y : terreno.altura(p.x, p.z)),
+    nombreCarro: () => TIPOS[v.tipo]?.nombre || 'Carro',
     llevarA(x, z, rumbo = p.rumbo) { p.x = x; p.z = z; p.rumbo = rumbo; p.vel = 0; choques.empujar(p, 0.35); colocar(); },
+    // Tour: el carro aparece en el carril de la calle más cercana al lugar; a pie, en el andén.
+    teletransportar(x, z) {
+      if (modo === 'manejar') {
+        const q = calles.carril(x, z, c.rumbo, 500);
+        if (!q) return;
+        Object.assign(c, { x: q.x, z: q.z, rumbo: q.rumbo, vel: 0, giro: 0, y: null, vy: 0, inercia: 0 });
+        colocarTaxi();
+      } else if (modo === 'volar') {
+        Object.assign(h, { x, z, y: Math.max(h.y, terreno.altura(x, z) + 120), vel: 0, velY: 0 });
+        colocarHeli();
+      } else if (modo === 'bici') {
+        const a = calles.anden(x, z, 500) || { x, z, rumbo: b.rumbo };
+        Object.assign(b, { x: a.x, z: a.z, rumbo: a.rumbo, vel: 0 });
+        colocarBici();
+      } else {
+        const a = calles.anden(x, z, 500) || { x, z, rumbo: p.rumbo };
+        this.llevarA(a.x, a.z, a.rumbo);
+      }
+    },
     teclas: controles.teclas,
   };
 }

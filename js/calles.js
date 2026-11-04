@@ -1,19 +1,18 @@
-import { anchoVia, andenVia } from './vias.js';
+import { anchoVia, andenVia, altoVia, BORDILLO } from './vias.js';
 
-// Consultas sobre las vías de carros: dónde poner un carro (en su carril y en el sentido en que se maneja),
-// dónde poner a alguien a pie (en el andén) y si un punto está sobre la calzada. Rejilla de 64 m.
+// Consultas sobre las vías: dónde poner un carro (en su carril y en el sentido en que se maneja), dónde poner a
+// alguien a pie (en el andén), si un punto está sobre la calzada y a qué altura está el piso. Rejilla de 64 m.
 const CELDA = 64;
 
-export function crearCalles(vias) {
+export function crearCalles(vias, terreno) {
   const celdas = new Map();
   for (const v of vias) {
-    if (v.clase > 4) continue;
-    const w = anchoVia(v) / 2, an = andenVia(v);
+    const w = anchoVia(v) / 2, an = andenVia(v), dy = altoVia(v), r = w + an;
     for (let i = 0; i < v.p.length - 1; i++) {
       const [ax, az] = v.p[i], [bx, bz] = v.p[i + 1];
-      const s = { ax, az, bx, bz, w, an, v };
-      for (let ix = Math.floor((Math.min(ax, bx) - w) / CELDA); ix <= Math.floor((Math.max(ax, bx) + w) / CELDA); ix++) {
-        for (let iz = Math.floor((Math.min(az, bz) - w) / CELDA); iz <= Math.floor((Math.max(az, bz) + w) / CELDA); iz++) {
+      const s = { ax, az, bx, bz, w, an, dy, v };
+      for (let ix = Math.floor((Math.min(ax, bx) - r) / CELDA); ix <= Math.floor((Math.max(ax, bx) + r) / CELDA); ix++) {
+        for (let iz = Math.floor((Math.min(az, bz) - r) / CELDA); iz <= Math.floor((Math.max(az, bz) + r) / CELDA); iz++) {
           const k = `${ix},${iz}`;
           if (!celdas.has(k)) celdas.set(k, []);
           celdas.get(k).push(s);
@@ -42,8 +41,19 @@ export function crearCalles(vias) {
   // ¿El punto está sobre la calzada de alguna vía de carros (con medio metro de gracia)?
   function dentro(x, z) {
     let si = false;
-    recorrer(x, z, 1, (s, d) => { if (d <= s.w + 0.5) si = true; });
+    recorrer(x, z, 1, (s, d) => { if (s.v.clase <= 4 && d <= s.w + 0.5) si = true; });
     return si;
+  }
+
+  // Altura del piso donde se pisa: las vías van levantadas sobre el terreno y los andenes un bordillo más.
+  // Personas, carros y postes se apoyan aquí; si no, quedan hundidos en el pavimento.
+  function piso(x, z) {
+    let extra = 0;
+    recorrer(x, z, 1, (s, d) => {
+      if (d <= s.w) extra = Math.max(extra, s.dy);
+      else if (s.an && d <= s.w + s.an) extra = Math.max(extra, s.dy + BORDILLO);
+    });
+    return terreno.altura(x, z) + extra;
   }
 
   // Carril para un carro cerca de (x, z): la calle de carros más cercana (no de servicio ni de TransMilenio).
@@ -77,5 +87,5 @@ export function crearCalles(vias) {
     return mejor;
   }
 
-  return { dentro, carril, anden };
+  return { dentro, carril, anden, piso };
 }

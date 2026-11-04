@@ -83,6 +83,18 @@ Primeras mejoras tomadas de Slop New York tras la revisión de Imderf (se veía 
 - **Datos de vías BOV2**: sentido (`oneway`), carriles (`lanes`) y si son solo de buses (TransMilenio), más las calles peatonales separadas de los senderos. Para rehacer solo las vías: `node tools/construir-centro.mjs vias`.
 - **El carro aparece en la calle** (`js/calles.js`): en el carril derecho de la calle de carros más cercana y en el sentido en que se maneja, nunca en la plaza. Alrededor de la Plaza de Bolívar las calles 10 y 11 y la Séptima son peatonales; el taxi del comienzo queda en la Calle 11, junto a la Catedral. El bordillo no deja subir el carro al andén ni a la plaza.
 
+### Interfaz y recorrido (2026-11-03, Imderf)
+
+Lo que más gustó de Slop New York, adaptado:
+
+- **Barra de arriba**: Golden hour, Mediodía, Hora azul y Noche, con ajuste fino de la hora; arranca siempre a mediodía. Tour, sonido (N) y vista limpia (H).
+- **Tour de 14 paradas** (`puntosDeVista` en `js/lugares.js`): Plaza de Bolívar, Casa de Nariño, Teatro Colón, Museo Botero y Luis Ángel Arango, Chorro de Quevedo, La Candelaria, Museo del Oro, Eje Ambiental, Quinta de Bolívar, Monserrate, Torre Colpatria, Museo Nacional, Planetario y Torres del Parque. Guadalupe, Bacatá y Avianca salen del menú (siguen en la ciudad). En vista libre la cámara vuela al lugar; en los demás modos el jugador aparece allí (el carro en el carril, a pie en el andén).
+- **Cuatro modos** con teclas 1 a 4 y píldora amarilla: Caminar, Manejar, Bici (`js/bici.js`) y Volar en helicóptero (`js/helicoptero.js`). V vuelve a la vista libre. Tablero con velocidad en km/h y altura.
+- **Personaje nuevo** (`js/personaje.js`): cuerpo suave por anillos (sin cajas), camina, corre y pedalea con los pies en los pedales.
+- **Minimapa GPS** (`js/minimapa.js`) con las placas de las dos calles más cercanas; los nombres salen de OpenStreetMap a `datos/centro/nombres-vias.json`.
+- **Sonido sintetizado** (`js/sonido.js`, sin archivos): ciudad, motor, bici, pasos, rotor, campanas cerca de la Catedral; B para el pito.
+- **Piso de las calles** (`calles.piso`): personas, carros y postes se apoyan sobre la calzada o el andén, no sobre el terreno (antes quedaban hundidos medio metro).
+
 ## Lo que sigue
 
 1. **Probar en un celular real**: Android e iPhone, con datos móviles.

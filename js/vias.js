@@ -13,6 +13,9 @@ const BORDILLO = 0.15;
 // Ancho real: por carriles si OpenStreetMap los dice (3,2 m; 3,5 m los de TransMilenio), si no, por clase.
 export const anchoVia = (v) => (v.clase <= 4 && v.carriles ? v.carriles * (v.bus ? 3.5 : 3.2) + 0.6 : v.bus ? 7 : ANCHO[v.clase]);
 export const andenVia = (v) => (v.bus ? 0 : ANDEN[v.clase] || 0);
+// Altura de la cinta sobre el terreno (se levanta para que el relieve de 32 m no la atraviese) y del bordillo.
+export const altoVia = (v) => ALTO[v.clase];
+export { BORDILLO };
 
 // BOV2 trae además, por vía, sentido y uso (ver banderasVia en tools/construir-centro.mjs) y número de carriles.
 // Las de un solo sentido quedan dibujadas en el sentido en que se maneja.
