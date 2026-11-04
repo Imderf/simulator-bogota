@@ -26,6 +26,7 @@ import { crearMinimapa } from './minimapa.js';
 import { crearSonido } from './sonido.js';
 import { crearTransMilenio } from './transmilenio.js';
 import { crearPeatones } from './peatones.js';
+import { crearSemaforos } from './semaforos.js';
 import { crearTrafico } from './trafico.js';
 import { crearAeropuerto } from './aeropuerto.js';
 
@@ -232,7 +233,10 @@ calles.agregarPisos(transmilenio.vagones.flatMap((v) => {
   return [{ anillo: rect(v.ancho / 2 + 3.7, v.largo / 2 + 12), y: y - 0.025 }, { anillo: rect(v.ancho / 2, v.largo / 2), y: y + 0.92 }];
 }));
 // Gente caminando por andenes, la Séptima y la plaza; cuánta depende de la hora.
-const peatones = crearPeatones({ vias, calles, choques, lugares });
+// Semáforos en los cruces principales: fases para carros y peatones.
+const semaforos = crearSemaforos({ vias, calles, choques });
+escena.add(semaforos.grupo);
+const peatones = crearPeatones({ vias, calles, choques, lugares, semaforos });
 escena.add(peatones.grupo);
 // Botón TransMilenio: lista de estaciones; la cámara vuela a cada una para ver llegar y parar los buses.
 {
@@ -277,9 +281,9 @@ const recorrido = crearRecorrido({
 const aeropuerto = await crearAeropuerto({ terreno, datos: DATOS });
 escena.add(aeropuerto.grupo);
 // Tráfico: carros, taxis, motos y buses del SITP por sus carriles; cuántos depende de la hora.
-const trafico = crearTrafico({ vias, calles, choques, estacionados, jugador: () => {
+const trafico = crearTrafico({ vias, calles, choques, estacionados, semaforos, peatones, transmilenio, jugador: () => {
   const [x, z] = recorrido.modo === 'libre' ? [controles.target.x, controles.target.z] : recorrido.posicion();
-  return { x, z, modo: recorrido.modo };
+  return { x, z, modo: recorrido.modo, rumbo: recorrido.rumbo() };
 } });
 escena.add(trafico.grupo);
 // Minimapa tipo GPS abajo a la izquierda, con las placas de las dos calles más cercanas.
@@ -531,6 +535,7 @@ renderer.setAnimationLoop(() => {
   farolas.actualizar(camara);
   bosque.userData.actualizar?.(camara);
   transmilenio.actualizar(dt, camara);
+  semaforos.actualizar(dt, camara);
   peatones.actualizar(dt, Number(control.value), camara);
   trafico.actualizar(dt, Number(control.value), camara);
   aeropuerto.actualizar(dt, Number(control.value), camara);

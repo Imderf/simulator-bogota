@@ -35,6 +35,7 @@ export function crearFarolas({ vias, terreno, choques, excluir = () => false }) 
         if (choques.empujar(prueba, 0.5)) continue;
         ocupado.add(llave);
         // La luminaria cuelga hacia el centro de la vía.
+        choques.agregar([x, z, 0.12]); // que la gente no atraviese el poste
         sitios.push({ x, z, y: terreno.altura(x, z), rumbo: Math.atan2(nx * lado, nz * lado), hx: x - nx * lado * BRAZO, hz: z - nz * lado * BRAZO });
       }
       hecho += l;

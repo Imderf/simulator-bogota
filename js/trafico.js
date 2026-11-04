@@ -4,15 +4,18 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { attribute, vertexColor, positionLocal, float, vec3, color, mix, step, smoothstep, abs, fract, max, min, fwidth } from 'three/tsl';
 import { noche } from './edificios.js';
 import { crearVehiculo } from './vehiculos.js';
-import { anchoVia } from './vias.js';
+import { anchoVia, andenVia } from './vias.js';
+import { VERDE, AMARILLO } from './semaforos.js';
 
 // Tráfico: taxis, carros particulares, camionetas, motos y buses del SITP por las vías de carros (clases 0-3, sin
 // TransMilenio), cada uno en su carril y en el sentido en que se maneja. La red de carriles se arma una vez; cada
 // vehículo sigue su carril con el modelo de conductor inteligente (IDM), pasa los cruces por curvas de unión y se
-// turna con los demás para entrar a cada cruce. Solo hay tráfico en un radio alrededor del jugador: los vehículos
-// aparecen y se retiran donde la cámara no los ve. Se dibuja con instancias: unas pocas llamadas por tipo.
+// turna con los demás para entrar a cada cruce. Donde hay semáforo para en rojo en la línea de pare, antes de la
+// cebra. Frena ante lo que tenga adelante: otros vehículos, la gente que cruza, los buses de TransMilenio y el
+// jugador; y cede el paso a TransMilenio, que no frena por nadie. Solo hay tráfico en un radio alrededor del
+// jugador: los vehículos aparecen y se retiran donde la cámara no los ve. Se dibuja con instancias.
 // Adaptado de Slop New York (mrdoob, MIT): js/traffic.js (IDM, aparición alrededor del foco, visibilidad con los
-// planos laterales del frustum y estado de frenos por instancia).
+// planos laterales del frustum, estado de frenos por instancia y parar en rojo o en amarillo si alcanza).
 
 const RADIO = 380; // m alrededor del jugador donde hay tráfico
 const VISTA_LIBRE = 320; // más lejos que esto de la cámara, aparecer o desaparecer ya no se nota
@@ -65,10 +68,13 @@ export function armarRed(vias) {
   // Un vértice interior cuenta 2 y una punta 1: más de 2 es que otra vía pasa o llega por ahí.
   const usos = new Map();
   for (const v of carros) v.p.forEach((q, i) => usos.set(k(q), (usos.get(k(q)) || 0) + (i === 0 || i === v.p.length - 1 ? 1 : 2)));
+  // Lo que despeja cada cruce, como en vias.js: la cebra se pinta de radio + 0,6 a radio + 3,6 m de su centro.
+  const radio = new Map();
+  for (const v of vias) if (v.clase <= 4) for (const q of v.p) radio.set(k(q), Math.max(radio.get(k(q)) || 0, anchoVia(v) / 2 + andenVia(v)));
   const nodos = new Map(), aristas = [];
   const nodo = (q) => {
     let n = nodos.get(k(q));
-    if (!n) nodos.set(k(q), n = { x: q[0], z: q[1], salidas: [], entradas: [], grado: 0, ancho: 0, corte: 3, cruce: false, ocupantes: [], turno: null, turnoT: 0 });
+    if (!n) nodos.set(k(q), n = { x: q[0], z: q[1], salidas: [], entradas: [], grado: 0, ancho: 0, corte: 3, cruce: false, ocupantes: [], turno: null, turnoT: 0, rCebra: radio.get(k(q)) || 0, sem: null });
     return n;
   };
   for (const via of carros) {
@@ -101,7 +107,10 @@ export function armarRed(vias) {
     e.hasta.entradas.push(e);
     e.ini = Math.min(e.desde.corte, e.largo * 0.4);
     e.fin = e.largo - Math.min(e.hasta.corte, e.largo * 0.4);
+    // Línea de pare: un metro antes de la cebra; donde no cabe (cruces muy seguidos), al comienzo de la arista.
+    e.pare = e.hasta.cruce ? Math.min(e.fin, Math.max(e.ini, e.largo - e.hasta.rCebra - 4.6)) : e.fin;
   }
+  zonasTransMilenio(aristas, vias);
   // Rejilla de aristas (con margen del ancho de la vía para encontrar también lo que está sobre la calzada).
   const celdas = new Map();
   for (const e of aristas) {
@@ -152,8 +161,84 @@ function arista(id, via, w, pts, desde, hasta) {
   const carriles = Array.from({ length: porSentido }, (_, i) => w - (i + 0.5) * anchoCarril);
   return {
     id, via, clase: via.clase, desde, hasta, xs, zs, acum, largo: acum[n - 1], ux, uz, mx, mz, vcurva,
-    carriles, anchoCarril, w, vmax: VEL_CLASE[via.clase], obst: [], inversa: null, ini: 0, fin: 0, con: new Map(), marca: 0,
+    carriles, anchoCarril, w, vmax: VEL_CLASE[via.clase], obst: [], inversa: null, ini: 0, fin: 0, pare: 0, con: new Map(), marca: 0,
+    tm: null, sem: null, eje: -1,
   };
+}
+
+// Donde una arista atraviesa un carril de TransMilenio. No comparten nodos (los buses van por su cuenta, en
+// js/transmilenio.js), así que se buscan los cortes de los trazos. Cada zona es un tramo [s0, s1] de la arista con
+// los puntos de corte; los dos sentidos del separador quedan en una sola zona: entre ellos no cabe un carro.
+function zonasTransMilenio(aristas, vias) {
+  const C = 32, celdas = new Map(), segs = [];
+  for (const v of vias) {
+    if (!v.bus) continue;
+    const w = anchoVia(v) / 2;
+    for (let i = 0; i < v.p.length - 1; i++) {
+      const [ax, az] = v.p[i], [bx, bz] = v.p[i + 1];
+      if (ax === bx && az === bz) continue;
+      const s = { ax, az, bx, bz, w };
+      for (let ix = Math.floor(Math.min(ax, bx) / C); ix <= Math.floor(Math.max(ax, bx) / C); ix++)
+        for (let iz = Math.floor(Math.min(az, bz) / C); iz <= Math.floor(Math.max(az, bz) / C); iz++)
+          (celdas.get(llave(ix, iz)) ?? celdas.set(llave(ix, iz), []).get(llave(ix, iz))).push(s);
+      segs.push(s);
+    }
+  }
+  if (!segs.length) return;
+  for (const e of aristas) {
+    const cortes = [], vistos = new Set();
+    for (let i = 0; i < e.xs.length - 1; i++) {
+      const ax = e.xs[i], az = e.zs[i], rx = e.xs[i + 1] - ax, rz = e.zs[i + 1] - az, l = e.acum[i + 1] - e.acum[i];
+      if (l < 1e-6) continue;
+      vistos.clear();
+      for (let ix = Math.floor(Math.min(ax, ax + rx) / C); ix <= Math.floor(Math.max(ax, ax + rx) / C); ix++)
+        for (let iz = Math.floor(Math.min(az, az + rz) / C); iz <= Math.floor(Math.max(az, az + rz) / C); iz++)
+          for (const s of celdas.get(llave(ix, iz)) || []) {
+            if (vistos.has(s)) continue;
+            vistos.add(s);
+            const qx = s.bx - s.ax, qz = s.bz - s.az, den = rx * qz - rz * qx;
+            if (Math.abs(den) < 1e-9) continue;
+            const t = ((s.ax - ax) * qz - (s.az - az) * qx) / den, u = ((s.ax - ax) * rz - (s.az - az) * rx) / den;
+            if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+            const seno = Math.abs(den) / (l * Math.hypot(qx, qz));
+            if (seno < 0.35) continue; // casi paralelos: van al lado, no se cruzan
+            const sc = e.acum[i] + t * l, h = s.w / seno + 0.8;
+            cortes.push({ s0: sc - h, s1: sc + h, x: ax + rx * t, z: az + rz * t });
+          }
+    }
+    if (!cortes.length) continue;
+    cortes.sort((a, b) => a.s0 - b.s0);
+    e.tm = [];
+    for (const c of cortes) {
+      const z = e.tm.at(-1);
+      if (z && c.s0 < z.s1 + 5) { z.s1 = Math.max(z.s1, c.s1); z.puntos.push(c); } else e.tm.push({ s0: c.s0, s1: c.s1, puntos: [c], marca: -1, ocupada: false, viene: false });
+    }
+  }
+}
+
+// Cada arista que llega a un cruce con semáforo sabe su grupo y su eje. Las del separador (de un nodo a otro del
+// mismo cruce) no tienen: se sigue con la luz con la que se entró.
+export function marcarSemaforos(red, semaforos) {
+  for (const n of red.nodos) n.sem = n.cruce ? semaforos.grupoEn(n.x, n.z) : null;
+  for (const e of red.aristas) {
+    const n = e.hasta, m = e.ux.length - 1;
+    e.sem = n.sem && e.desde.sem !== n.sem ? n.sem : null;
+    e.eje = e.sem ? semaforos.eje(e.sem, -e.ux[m], -e.uz[m]) : -1;
+  }
+}
+
+// Distancia entre los tramos ab y cd (0 si se cortan).
+function distTramos(ax, az, bx, bz, cx, cz, dx, dz) {
+  const rx = bx - ax, rz = bz - az, qx = dx - cx, qz = dz - cz, den = rx * qz - rz * qx;
+  if (Math.abs(den) > 1e-9) {
+    const t = ((cx - ax) * qz - (cz - az) * qx) / den, u = ((cx - ax) * rz - (cz - az) * rx) / den;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return 0;
+  }
+  const punto = (px, pz, sx, sz, ex, ez) => {
+    const ux = ex - sx, uz = ez - sz, l2 = ux * ux + uz * uz || 1, t = Math.max(0, Math.min(1, ((px - sx) * ux + (pz - sz) * uz) / l2));
+    return Math.hypot(px - sx - ux * t, pz - sz - uz * t);
+  };
+  return Math.min(punto(ax, az, cx, cz, dx, dz), punto(bx, bz, cx, cz, dx, dz), punto(cx, cz, ax, az, bx, bz), punto(dx, dz, ax, az, bx, bz));
 }
 
 // Punto del carril a `s` metros del comienzo de la arista, `off` metros a la derecha del eje. `j` es una pista del tramo.
@@ -227,7 +312,9 @@ export function marcarEstacionados(red, lista) {
 const angulo = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const elegir = (lista) => lista[Math.floor(Math.random() * lista.length)];
 
-export function crearSimulacion(red, flota, { radio = RADIO } = {}) {
+// semaforos (opcional): lo que devuelve crearSemaforos (js/semaforos.js).
+export function crearSimulacion(red, flota, { radio = RADIO, semaforos = null } = {}) {
+  if (semaforos) marcarSemaforos(red, semaforos);
   const vehiculos = [];
   for (const f of flota) {
     // Para los choques, cada vehículo es una cápsula: un tramo a lo largo de su eje (metros desde el centro entre
@@ -235,7 +322,7 @@ export function crearSimulacion(red, flota, { radio = RADIO } = {}) {
     const radioChoque = f.moto ? 0.45 : f.ancho * 0.52, delante = f.eje / 2 + f.adelante;
     const T = {
       ...f, medio: f.largo / 2, mancho: f.ancho / 2, raizLat: Math.sqrt(f.conductor.aLat / 2.4),
-      radioChoque, capsula: [-(f.largo - delante - radioChoque), delante - radioChoque],
+      radioChoque, capsula: [-(f.largo - delante - radioChoque), delante - radioChoque], delante,
     };
     for (let i = 0; i < f.cuantos; i++) {
       vehiculos.push({
@@ -261,12 +348,74 @@ export function crearSimulacion(red, flota, { radio = RADIO } = {}) {
     if (!l) rejilla.set(c, l = []);
     l.push(v);
   };
-  function cerca(x, z, r, fn) {
+  const recorrer = (rej, x, z, r, fn) => {
     for (let i = Math.floor((x - r) / CELDA); i <= Math.floor((x + r) / CELDA); i++)
       for (let j = Math.floor((z - r) / CELDA); j <= Math.floor((z + r) / CELDA); j++) {
-        const l = rejilla.get(llave(i, j));
+        const l = rej.get(llave(i, j));
         if (l) for (const v of l) fn(v);
       }
+  };
+  const cerca = (x, z, r, fn) => recorrer(rejilla, x, z, r, fn);
+  // Lo que no es tráfico pero estorba: la gente (js/peatones.js) y los buses de TransMilenio, cada cuerpo del
+  // articulado como una cápsula. Se rehace cada cuadro con lo que llega en actualizar().
+  const obst = new Map(), poolPersonas = [], poolTM = [];
+  const PERSONA = { medio: 0.3, mancho: 0.3, radioChoque: 0.3, capsula: [0, 0] };
+  const meterObst = (o) => {
+    const c = llave(Math.floor(o.cx / CELDA), Math.floor(o.cz / CELDA));
+    (obst.get(c) ?? obst.set(c, []).get(c)).push(o);
+  };
+  const cercaObst = (x, z, r, fn) => recorrer(obst, x, z, r, fn);
+  const buses = []; // cuerpos de TransMilenio del cuadro, para las zonas de cruce
+  function llenarObst(otros) {
+    for (const l of obst.values()) l.length = 0;
+    buses.length = 0;
+    let n = 0;
+    for (const p of otros?.personas || []) {
+      if (!p.activo) continue;
+      const o = poolPersonas[n] ??= { peaton: true, cx: 0, cz: 0, vx: 0, vz: 0, hx: 0, hz: -1, vel: 0, T: PERSONA };
+      n++;
+      o.cx = p.x; o.cz = p.z; o.vel = p.vel;
+      o.vx = -Math.sin(p.rumbo) * p.vel; o.vz = -Math.cos(p.rumbo) * p.vel;
+      meterObst(o);
+    }
+    n = 0;
+    for (const b of otros?.buses || []) {
+      if (!b.puntos) continue;
+      // Puntos de js/transmilenio.js: trompa, ejes 1 a 3 y cola. La articulación va a 11,65 m de la trompa,
+      // entre el segundo eje (8,5 m) y el tercero (15,2 m).
+      const [F, , A2, A3, Rr] = b.puntos, k = (11.65 - 8.5) / (15.2 - 8.5);
+      const P = [A2[0] + (A3[0] - A2[0]) * k, A2[1] + (A3[1] - A2[1]) * k];
+      for (const [a, c] of [[F, P], [P, Rr]]) {
+        const l = Math.hypot(a[0] - c[0], a[1] - c[1]) || 1, o = poolTM[n] ??= { tm: true, cx: 0, cz: 0, hx: 0, hz: -1, vel: 0, T: { medio: 0, mancho: 1.3, radioChoque: 1.3, capsula: [0, 0] } };
+        n++;
+        o.cx = (a[0] + c[0]) / 2; o.cz = (a[1] + c[1]) / 2; o.hx = (a[0] - c[0]) / l; o.hz = (a[1] - c[1]) / l; o.vel = b.v || 0;
+        o.T.medio = l / 2; o.T.capsula[0] = -Math.max(0, l / 2 - 1.3); o.T.capsula[1] = Math.max(0, l / 2 - 1.3);
+        meterObst(o);
+      }
+      buses.push(b);
+    }
+  }
+  // Distancia de (x, z) al cuerpo de o (su cápsula).
+  const distCuerpo = (x, z, o) => {
+    const [a, b] = o.T.capsula, ax = o.cx + o.hx * a, az = o.cz + o.hz * a;
+    const t = Math.max(0, Math.min(b - a, (x - ax) * o.hx + (z - az) * o.hz));
+    return Math.hypot(x - ax - o.hx * t, z - az - o.hz * t);
+  };
+  // ¿Hay un bus de TransMilenio sobre la zona, o llegando a ella? Se calcula una vez por cuadro y zona.
+  function revisarZona(z) {
+    if (z.marca === tiempo) return;
+    z.marca = tiempo; z.ocupada = z.viene = false;
+    for (const b of buses) {
+      const [F, A1] = b.puntos, hl = Math.hypot(F[0] - A1[0], F[1] - A1[1]) || 1, hx = (F[0] - A1[0]) / hl, hz = (F[1] - A1[1]) / hl;
+      for (const p of z.puntos) {
+        for (let i = 0; i < b.puntos.length - 1 && !z.ocupada; i++) {
+          const [ax, az] = b.puntos[i], [bx, bz] = b.puntos[i + 1];
+          if (distTramos(p.x, p.z, p.x, p.z, ax, az, bx, bz) < 3.6) z.ocupada = true;
+        }
+        const dx = p.x - F[0], dz = p.z - F[1], a = dx * hx + dz * hz;
+        if (a > 0 && a < 8 + 4.5 * (b.v || 0) && Math.abs(dx * hz - dz * hx) < 3) z.viene = true;
+      }
+    }
   }
 
   // Aristas alrededor del foco con su peso para aparecer; se rehace cuando el foco se mueve 40 m.
@@ -398,9 +547,10 @@ export function crearSimulacion(red, flota, { radio = RADIO } = {}) {
     if (v.e && v.e.hasta.turno === v) v.e.hasta.turno = null;
   }
 
-  // Aceleración del cuadro: IDM con los vehículos de adelante (y el jugador), pare en el cruce si está ocupado y
-  // velocidad máxima en curvas y cruces.
+  // Aceleración del cuadro: IDM con lo que tenga adelante (vehículos, gente, TransMilenio, el jugador), semáforos,
+  // pare en el cruce si está ocupado, ceder a TransMilenio y velocidad máxima en curvas y cruces.
   const q = { x: 0, z: 0, j: 0 };
+  const PREVER = 0.9; // s: a quien va a bajar a la calzada se le frena antes de que baje
   function calcular(v, dt, jug) {
     const T = v.T, C = T.conductor, e = v.e, vel = v.vel;
     const v0 = Math.max(2, e.vmax * v.conductor * C.vel * flu);
@@ -411,34 +561,12 @@ export function crearSimulacion(red, flota, { radio = RADIO } = {}) {
     };
     let inter = 0, tope = Infinity, lim = Infinity;
     const limite = (d, vl) => { if (vel > vl) lim = Math.min(lim, (vl * vl - vel * vel) / (2 * Math.max(d, 1))); };
-    if (!v.con) {
-      for (let j = v.j + 1; j < e.xs.length - 1 && e.acum[j] - v.s < 50; j++) limite(e.acum[j] - v.s, e.vcurva[j] * T.raizLat);
-      const d = e.fin - v.s, parada = d - T.adelante - 0.5;
-      if (!v.sig) {
-        v.sinSalida = true;
-        inter = Math.min(inter, frenar(parada, 0, 0.3, 0));
-        tope = Math.max(0, parada);
-      } else if (d < 60) {
-        const con = unir(v, e, v.c, v.sig, v.sc);
-        limite(d, Math.min(Math.sqrt(C.aLat * con.R), e.hasta.cruce ? 7.5 : Infinity));
-        if (e.hasta.cruce && v.reservado !== e.hasta) {
-          if (puedeEntrar(e.hasta, v, con)) {
-            if (parada < Math.max(5, (vel * vel) / (2 * C.b) + 3)) reservar(e.hasta, v, con);
-            v.esperaCruce = 0;
-          } else {
-            inter = Math.min(inter, frenar(parada, 0, 0.3, 0));
-            tope = Math.max(0, parada);
-            v.esperaCruce += dt;
-            const n = e.hasta;
-            if (v.esperaCruce > 3 && (!n.turno || !n.turno.activo || n.turno.reservado || tiempo - n.turnoT > 10)) { n.turno = v; n.turnoT = tiempo; }
-          }
-        }
-      }
-    } else if (vel > Math.sqrt(C.aLat * v.con.R)) lim = Math.min(lim, (Math.sqrt(C.aLat * v.con.R) - vel) * 2);
+    // Parar con el frente a d metros: el IDM frena y el tope no lo deja pasar (nunca se mete donde no cabe).
+    const parar = (d) => { inter = Math.min(inter, frenar(d, 0, 0.3, 0)); tope = Math.min(tope, Math.max(0, d)); };
 
-    // El de adelante: cualquiera cuyo centro quede sobre la ruta que el vehículo va a recorrer.
+    // Lo de adelante: cualquier cuerpo que quede sobre la ruta que el vehículo va a recorrer.
     const mira = Math.min(55, 15 + vel * 3);
-    let hueco = Infinity;
+    let hueco = Infinity, velHueco = 0; // velocidad de lo que deja ese hueco
     const considerar = (o) => {
       if (o === v) return;
       // Dos que entran por curvas al mismo carril (p. ej. donde se acaba un carril): va primero el que tiene menos
@@ -451,18 +579,96 @@ export function crearSimulacion(red, flota, { radio = RADIO } = {}) {
         hueco = Math.min(hueco, h);
         return;
       }
-      const dx = o.cx - v.cx, dz = o.cz - v.cz, ad = dx * v.hx + dz * v.hz;
-      if (ad <= 0.3 || ad > mira + o.T.medio || Math.abs(dz * v.hx - dx * v.hz) > 9) return;
-      const dot = o.hx * v.hx + o.hz * v.hz;
-      if (!o.jugador && dot < -0.3) return; // de frente: va por el otro carril
-      puntoAdelante(v, ad - T.eje / 2, q);
-      if (Math.hypot(o.cx - q.x, o.cz - q.z) > T.mancho + o.T.mancho + 0.25) return;
-      const h = ad - T.medio - o.T.medio;
-      inter = Math.min(inter, frenar(h, Math.max(0, o.jugador ? o.vx * v.hx + o.vz * v.hz : o.vel * dot)));
-      hueco = Math.min(hueco, h);
+      const dx = o.cx - v.cx, dz = o.cz - v.cz, ad = dx * v.hx + dz * v.hz, dot = o.hx * v.hx + o.hz * v.hz;
+      // Proyección de las puntas de su cuerpo sobre el rumbo propio: un bus atravesado está a su medio ancho, no a su
+      // medio largo, y la cola de uno largo que dobla también estorba aunque su centro ya no esté en la ruta.
+      const [a, b] = o.T.capsula, pa = ad + dot * a, pb = ad + dot * b, r = o.T.radioChoque;
+      if ((o.tm ? Math.max(pa, pb) : ad) <= 0.3 || Math.min(pa, pb) - r > mira || Math.abs(dz * v.hx - dx * v.hz) > 9 + o.T.medio) return;
+      if (!o.jugador && !o.tm && dot < -0.3) return; // de frente: va por el otro carril
+      let enRuta = false;
+      for (const p of [pa, ad, pb]) {
+        if (p <= 0.3 || p > mira + r) continue;
+        puntoAdelante(v, p - T.eje / 2, q);
+        if (distCuerpo(q.x, q.z, o) <= T.mancho + r + 0.25) { enRuta = true; break; }
+      }
+      if (!enRuta) return;
+      const h = Math.min(pa, pb) - r - T.delante, vl = Math.max(0, o.jugador ? o.vx * v.hx + o.vz * v.hz : o.vel * dot);
+      inter = Math.min(inter, frenar(h, vl));
+      if (h < hueco) { hueco = h; velHueco = vl; }
     };
-    cerca(v.cx + v.hx * mira * 0.5, v.cz + v.hz * mira * 0.5, mira * 0.5 + 8, considerar);
-    if (jug) considerar(jug);
+    // La gente se mira donde está y donde estará en un momento: si va a bajar a la calzada, se le frena antes.
+    const persona = (o) => {
+      for (let k = 0; k < 2; k++) {
+        const px = o.cx + (k ? o.vx * PREVER : 0), pz = o.cz + (k ? o.vz * PREVER : 0);
+        const dx = px - v.cx, dz = pz - v.cz, ad = dx * v.hx + dz * v.hz;
+        if (ad <= 0.3 || ad > mira + 0.5 || Math.abs(dz * v.hx - dx * v.hz) > 7) continue;
+        puntoAdelante(v, ad - T.eje / 2, q);
+        if (Math.hypot(px - q.x, pz - q.z) > T.mancho + o.T.mancho + 0.4) continue;
+        const h = ad - T.delante - o.T.medio;
+        inter = Math.min(inter, frenar(h, 0, 2, C.T));
+        if (h < hueco) { hueco = h; velHueco = 0; }
+        return;
+      }
+    };
+    const cx = v.cx + v.hx * mira * 0.5, cz = v.cz + v.hz * mira * 0.5, r = mira * 0.5 + 8;
+    cerca(cx, cz, r, considerar);
+    cercaObst(cx, cz, r + 6, (o) => (o.peaton ? persona(o) : considerar(o)));
+    if (jug) (jug.pie ? persona(jug) : considerar(jug));
+
+    if (!v.con) {
+      for (let j = v.j + 1; j < e.xs.length - 1 && e.acum[j] - v.s < 50; j++) limite(e.acum[j] - v.s, e.vcurva[j] * T.raizLat);
+      const d = e.fin - v.s, parada = d - T.adelante - 0.5;
+      if (!v.sig) {
+        v.sinSalida = true;
+        parar(parada);
+      } else if (d < 60) {
+        const con = unir(v, e, v.c, v.sig, v.sc), n = e.hasta;
+        limite(d, Math.min(Math.sqrt(C.aLat * con.R), n.cruce ? 7.5 : Infinity));
+        // La línea de pare queda antes de la cebra: ahí se espera el verde y el turno para entrar.
+        const dPare = e.pare - v.s - T.adelante, antes = dPare > -0.3;
+        let siga = true;
+        if (n.cruce && e.sem && antes) {
+          const l = semaforos.estado(e.sem, e.eje);
+          // En amarillo sigue solo el que ya no alcanza a frenar sin brusquedad. Si le cambió la luz con el cruce
+          // ya reservado pero sin pasar la línea, suelta la reserva y para.
+          siga = l === VERDE || (l === AMARILLO && (vel * vel) / (2 * C.b) > dPare + 1);
+          if (!siga && v.reservado === n) soltarReserva(v);
+        }
+        if (n.cruce && v.reservado !== n) {
+          if (siga && puedeEntrar(n, v, con)) {
+            if (!antes || dPare < Math.max(5, (vel * vel) / (2 * C.b) + 3)) reservar(n, v, con);
+            v.esperaCruce = 0;
+          } else {
+            parar(antes ? dPare : parada);
+            if (!siga) v.esperaCruce = 0;
+            else {
+              v.esperaCruce += dt;
+              // Sin semáforo, el que lleva rato esperando toma el turno (con semáforo, el turno lo da la luz).
+              if (!e.sem && v.esperaCruce > 3 && (!n.turno || !n.turno.activo || n.turno.reservado || tiempo - n.turnoT > 10)) { n.turno = v; n.turnoT = tiempo; }
+            }
+          }
+        }
+      }
+    } else if (vel > Math.sqrt(C.aLat * v.con.R)) lim = Math.min(lim, (Math.sqrt(C.aLat * v.con.R) - vel) * 2);
+
+    // TransMilenio no frena por los carros: antes de atravesar sus carriles se para si hay un bus encima o llegando,
+    // o si no hay espacio al otro lado (quedaría parado sobre el carril del bus).
+    const zona = (z, base) => {
+      const a0 = base + z.s0, a1 = base + z.s1;
+      if (a0 < -0.2 || a0 > mira + 10) return; // ya entró (sigue) o está lejos
+      revisarZona(z);
+      // Al otro lado debe caberle con holgura: si el de adelante va despacio, la fila puede pararse encima del carril.
+      const sinSalida = a0 < 25 && (hueco < a1 + T.largo + 2 || (velHueco < 3 && hueco < a1 + T.largo + 12));
+      if (z.ocupada || sinSalida || (z.viene && (vel * vel) / (2 * C.b) < a0 - 1)) parar(a0 - 1);
+    };
+    if (!v.con) {
+      if (e.tm) for (const z of e.tm) zona(z, -v.s - T.adelante);
+      if (v.sig?.tm && e.fin - v.s < mira) {
+        const base = e.fin - v.s + unir(v, e, v.c, v.sig, v.sc).largo - v.sig.ini - T.adelante;
+        for (const z of v.sig.tm) zona(z, base);
+      }
+    } else if (e.tm) for (const z of e.tm) zona(z, v.con.largo - v.s - e.ini - T.adelante);
+
     tope = Math.min(tope, Math.max(0, hueco - 0.2));
     v.acc = Math.max(-C.bMax, Math.min(libre + inter, lim));
     v.tope = tope;
@@ -518,9 +724,12 @@ export function crearSimulacion(red, flota, { radio = RADIO } = {}) {
       const e = sortear();
       if (!e) return false;
       if (T.bus && e.clase > 2) continue;
-      const hay = e.fin - e.ini - T.largo - 2;
+      // Antes de la línea de pare (no aparece pasándose un rojo) y fuera de los carriles de TransMilenio.
+      const hay = e.pare - e.ini - T.largo - 2;
       if (hay <= 0) continue;
       const s = e.ini + T.eje + 1 + Math.random() * hay, c = Math.floor(Math.random() * e.carriles.length);
+      const frente = s + T.adelante, cola = frente - T.largo;
+      if (e.tm?.some((z) => frente > z.s0 - 2 && cola < z.s1 + 2)) continue;
       v.e = e; v.c = c; v.con = null;
       puntoCarril(e, s, desplazamiento(v, e, c, s), q);
       if (Math.hypot(q.x - foco.x, q.z - foco.z) > radio) continue;
@@ -528,6 +737,7 @@ export function crearSimulacion(red, flota, { radio = RADIO } = {}) {
       if (protegido && vista && vista.distancia(q.x, q.z) < VISTA_LIBRE && vista.visible(q.x, q.z, T.medio + 3)) continue;
       let ocupado = false;
       cerca(q.x, q.z, T.largo + 8, (o) => { if (Math.hypot(o.cx - q.x, o.cz - q.z) < T.medio + o.T.medio + 5) ocupado = true; });
+      cercaObst(q.x, q.z, T.largo + 8, (o) => { if (distCuerpo(q.x, q.z, o) < T.medio + o.T.radioChoque + 1.5) ocupado = true; });
       if (ocupado) continue;
       Object.assign(v, { s, j: q.j, x: q.x, z: q.z, vel: Math.min(e.vmax * flu, 9) * (0.4 + Math.random() * 0.5), acc: 0,
         reservado: null, espera: 0, esperaCruce: 0, sinSalida: false, y: null, visto: -1, giro: 0, alabeo: 0, cabeceo: 0, activo: true });
@@ -552,9 +762,38 @@ export function crearSimulacion(red, flota, { radio = RADIO } = {}) {
   }
 
   // foco: { x, z }; jugador: { x, z, modo } o null; vista: { visible(x, z, r), distancia(x, z) } o null (sin cámara).
-  let jx = null, jz = null, jvx = 0, jvz = 0;
-  function actualizar(dt, hora, nuevoFoco, jugador, vista) {
+  // ¿Puede avanzar ds sin hundirse más en otro cuerpo? Se mira la cápsula corrida ds hacia adelante (en un cuadro el
+  // giro no cambia nada que importe) contra la de cada vecino, ya movido si le tocó antes en este cuadro.
+  function libreAl(v, ds) {
+    const [a, b] = v.T.capsula, r = v.T.radioChoque;
+    const x0 = v.cx + v.hx * a, z0 = v.cz + v.hz * a, x1 = v.cx + v.hx * b, z1 = v.cz + v.hz * b;
+    let libre = true;
+    const revisar = (o) => {
+      if (!libre || o === v) return;
+      const [oa, ob] = o.T.capsula, ro = o.T.radioChoque + r;
+      const ox0 = o.cx + o.hx * oa, oz0 = o.cz + o.hz * oa, ox1 = o.cx + o.hx * ob, oz1 = o.cz + o.hz * ob;
+      const despues = distTramos(x0 + v.hx * ds, z0 + v.hz * ds, x1 + v.hx * ds, z1 + v.hz * ds, ox0, oz0, ox1, oz1);
+      if (despues >= ro - 0.02) return;
+      if (despues < distTramos(x0, z0, x1, z1, ox0, oz0, ox1, oz1) - 1e-4) libre = false;
+    };
+    const R = v.T.medio + ds + 8;
+    cerca(v.cx, v.cz, R, revisar);
+    cercaObst(v.cx, v.cz, R + 6, revisar);
+    if (jug) revisar(jug);
+    return libre;
+  }
+
+  // otros (opcional): { personas, buses }: la gente de js/peatones.js ({ activo, x, z, rumbo, vel }) y los buses de
+  // js/transmilenio.js (flota.buses).
+  let jx = null, jz = null, jvx = 0, jvz = 0, jug = null;
+  const CUERPO_JUGADOR = {
+    pie: { medio: 0.35, mancho: 0.35, radioChoque: 0.35, capsula: [0, 0] },
+    bici: { medio: 0.9, mancho: 0.35, radioChoque: 0.4, capsula: [-0.5, 0.5] },
+    carro: { medio: 2.2, mancho: 0.9, radioChoque: 0.92, capsula: [-1.3, 1.3] },
+  };
+  function actualizar(dt, hora, nuevoFoco, jugador, vista, otros = null) {
     tiempo += dt;
+    llenarObst(otros);
     const d = densidad(hora);
     flu = fluidez(d);
     objetivo = Math.round(vehiculos.length * d);
@@ -566,23 +805,29 @@ export function crearSimulacion(red, flota, { radio = RADIO } = {}) {
     for (const l of rejilla.values()) l.length = 0;
     for (const v of activos) meter(v);
 
-    // El jugador (a pie, en bici o en carro) es un obstáculo más; su velocidad se estima entre cuadros.
-    let jug = null;
+    // El jugador (a pie, en bici o en carro) es un obstáculo más; su velocidad se estima entre cuadros y su rumbo
+    // llega con él (si no, el de su velocidad). A pie se le trata como a la gente.
     if (jugador && /caminar|manejar|bici/.test(jugador.modo)) {
       if (jx !== null && dt > 0) {
         const k = Math.min(1, dt * 8);
         jvx += ((jugador.x - jx) / dt - jvx) * k; jvz += ((jugador.z - jz) / dt - jvz) * k;
       }
-      const carro = jugador.modo === 'manejar';
-      jug = { jugador: true, cx: jugador.x, cz: jugador.z, vx: jvx, vz: jvz, hx: 0, hz: 0, vel: 0, T: { medio: carro ? 2.2 : 0.5, mancho: carro ? 0.95 : 0.6 } };
+      const modo = jugador.modo === 'manejar' ? 'carro' : jugador.modo === 'bici' ? 'bici' : 'pie', vj = Math.hypot(jvx, jvz);
+      jug ??= { jugador: true, cx: 0, cz: 0, vx: 0, vz: 0, hx: 0, hz: -1, vel: 0, pie: false, T: null };
+      Object.assign(jug, { cx: jugador.x, cz: jugador.z, vx: jvx, vz: jvz, vel: vj, pie: modo === 'pie', T: CUERPO_JUGADOR[modo] });
+      if (jugador.rumbo !== undefined) { jug.hx = -Math.sin(jugador.rumbo); jug.hz = -Math.cos(jugador.rumbo); } else if (vj > 0.3) { jug.hx = jvx / vj; jug.hz = jvz / vj; }
       jx = jugador.x; jz = jugador.z;
-    } else jx = jz = null;
+    } else { jx = jz = null; jug = null; }
 
     for (const v of activos) calcular(v, dt, jug);
     for (const v of activos) {
       v.vel = Math.max(0, v.vel + v.acc * dt);
-      const ds = Math.min(v.vel * dt, v.tope);
-      if (v.tope < 0.05) v.vel = 0; // pegado al de adelante o a la raya: quieto
+      let ds = Math.min(v.vel * dt, v.tope);
+      // Nunca se mete en otro cuerpo: si avanzar lo hunde más en alguien (vehículo, persona, bus, el jugador), avanza
+      // la mitad o se queda quieto. Es la red de seguridad de lo de arriba (colas de buses que doblan, carriles que se
+      // juntan): lo normal es que ya haya frenado antes.
+      if (ds > 0 && !libreAl(v, ds)) ds = libreAl(v, ds / 2) ? ds / 2 : 0;
+      if (v.tope < 0.05 || ds === 0) v.vel = 0; // pegado al de adelante o a la raya: quieto
       v.espera = v.vel < 0.3 ? v.espera + dt : 0;
       avanzar(v, ds);
       posar(v, dt, ds);
@@ -608,7 +853,59 @@ export function crearSimulacion(red, flota, { radio = RADIO } = {}) {
     }
   }
 
-  return { vehiculos, activos, actualizar, cerca, puntoAdelante, get objetivo() { return objetivo; } };
+  // ¿Algún vehículo está sobre el cruce de (x0, z0) a (x1, z1) o lo pisaría en los próximos `seg` segundos si sigue
+  // derecho? Para la gente que va a cruzar. TransMilenio no frena: a sus buses se les mira más lejos (segTM).
+  function viene(x0, z0, x1, z1, seg, segTM = Math.max(seg, 8)) {
+    const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2, r = Math.hypot(x1 - x0, z1 - z0) / 2;
+    let si = false;
+    const revisar = (o, s) => {
+      if (si || o.peaton) return;
+      // Lo que barre en esos segundos: su cuerpo estirado hacia adelante.
+      const [a, b] = o.T.capsula, ade = b + (o.vel > 0.3 ? o.vel * s : 0);
+      const d = distTramos(o.cx + o.hx * a, o.cz + o.hz * a, o.cx + o.hx * ade, o.cz + o.hz * ade, x0, z0, x1, z1);
+      if (d < o.T.radioChoque + 0.6) si = true;
+    };
+    cerca(mx, mz, r + 12 + 16 * seg, (o) => revisar(o, seg));
+    cercaObst(mx, mz, r + 20 + 14 * segTM, (o) => revisar(o, segTM));
+    return si;
+  }
+  // Saca un círculo (p.x, p.z, radio) de los vehículos y de los buses de TransMilenio. Devuelve la normal o null.
+  function empujar(p, radio) {
+    let normal = null;
+    const fuera = (o) => {
+      if (o.peaton) return;
+      const [a, b] = o.T.capsula, ax = o.cx + o.hx * a, az = o.cz + o.hz * a;
+      const t = Math.max(0, Math.min(b - a, (p.x - ax) * o.hx + (p.z - az) * o.hz));
+      let ex = p.x - ax - o.hx * t, ez = p.z - az - o.hz * t, d = Math.hypot(ex, ez);
+      const r = o.T.radioChoque + radio;
+      if (d >= r) return;
+      if (d < 1e-6) { ex = -o.hz; ez = o.hx; d = 1e-6; } // justo en el eje: sale de lado
+      else { ex /= d; ez /= d; }
+      p.x += ex * (r - d); p.z += ez * (r - d);
+      normal = [ex, ez];
+    };
+    cerca(p.x, p.z, radio + 8, fuera);
+    cercaObst(p.x, p.z, radio + 10, fuera);
+    return normal;
+  }
+
+  // Distancia desde (x, z) hacia (hx, hz) hasta el primer vehículo o persona que estorbe en una franja de medio ancho
+  // `ancho` (Infinity si no hay). Para que un articulado de js/transmilenio.js frene si alguien quedó en su carril.
+  function delante(x, z, hx, hz, ancho = 1.3, mira = 60) {
+    let d = Infinity;
+    const revisar = (o) => {
+      if (o.tm) return;
+      const [a, b] = o.T.capsula, r = o.T.radioChoque;
+      const ax = o.cx + o.hx * a, az = o.cz + o.hz * a, bx = o.cx + o.hx * b, bz = o.cz + o.hz * b;
+      if (distTramos(ax, az, bx, bz, x, z, x + hx * mira, z + hz * mira) > ancho + r) return;
+      d = Math.min(d, Math.max(0, Math.min((ax - x) * hx + (az - z) * hz, (bx - x) * hx + (bz - z) * hz) - r));
+    };
+    cerca(x + hx * mira / 2, z + hz * mira / 2, mira / 2 + 8, revisar);
+    cercaObst(x + hx * mira / 2, z + hz * mira / 2, mira / 2 + 8, revisar);
+    return d;
+  }
+
+  return { vehiculos, activos, actualizar, cerca, puntoAdelante, viene, empujar, delante, jugador: () => jug, get objetivo() { return objetivo; } };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -845,10 +1142,12 @@ function modeloBus(n) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // El tráfico completo.
-// jugador: () => { x, z, modo }. estacionados (opcional): lo que devuelve estacionar(), para esquivarlos.
-// Encadena choques.empujar: el jugador (en carro, a pie o en bici) choca con el tráfico sin cambiar jugador.js.
+// jugador: () => { x, z, modo, rumbo? }. estacionados (opcional): lo que devuelve estacionar(), para esquivarlos.
+// semaforos (js/semaforos.js), peatones (js/peatones.js) y transmilenio (js/transmilenio.js) son opcionales: con
+// ellos el tráfico para en rojo, frena ante la gente y cede a los articulados; a la gente se le avisa qué viene.
+// Encadena choques.empujar: el jugador (en carro, a pie o en bici) choca con el tráfico y con TransMilenio.
 // ---------------------------------------------------------------------------------------------------------------
-export function crearTrafico({ vias, calles, choques, jugador, estacionados = null }) {
+export function crearTrafico({ vias, calles, choques, jugador, estacionados = null, semaforos = null, peatones = null, transmilenio = null }) {
   const red = armarRed(vias);
   if (estacionados) marcarEstacionados(red, estacionados.lista);
   const grupo = new THREE.Group();
@@ -864,7 +1163,8 @@ export function crearTrafico({ vias, calles, choques, jugador, estacionados = nu
     grupo.add(...M.todas);
     flota.push({ ...f, ...(M.dims || {}), radioRueda: M.dims?.radioRueda ?? 0.3 });
   }
-  const sim = crearSimulacion(red, flota);
+  const sim = crearSimulacion(red, flota, { semaforos });
+  const otros = { personas: peatones?.gente || [], buses: transmilenio?.flota?.buses || [] };
 
   // Visibilidad con los cuatro planos laterales del frustum (los de cerca y lejos dependen de la convención de
   // profundidad, y los laterales ya descartan lo que queda detrás de la cámara).
@@ -938,33 +1238,19 @@ export function crearTrafico({ vias, calles, choques, jugador, estacionados = nu
     const lejos = camara && Math.hypot(camX - foco.x, camY - calles.piso(foco.x, foco.z), camZ - foco.z) > 1800;
     grupo.visible = !lejos;
     if (lejos) return;
-    sim.actualizar(dt, hora, foco, j, camara ? vista : null);
+    sim.actualizar(dt, hora, foco, j, camara ? vista : null, otros);
     // De noche todos andan con las luces prendidas.
     const faros = Math.min(1, Math.max(0, (noche.value - 0.2) * 1.6));
     for (const M of Object.values(modelos)) for (const m of M.faros || []) m.faros = faros;
     dibujar(dt);
   }
 
-  // Empuja un círculo (p.x, p.z, radio) fuera de los vehículos del tráfico. Devuelve la normal del choque o null.
-  function empujar(p, radio) {
-    let normal = null;
-    sim.cerca(p.x, p.z, radio + 8, (v) => {
-      const [a, b] = v.T.capsula, ax = v.cx + v.hx * a, az = v.cz + v.hz * a;
-      const t = Math.max(0, Math.min(b - a, (p.x - ax) * v.hx + (p.z - az) * v.hz));
-      let ex = p.x - ax - v.hx * t, ez = p.z - az - v.hz * t, d = Math.hypot(ex, ez);
-      const r = v.T.radioChoque + radio;
-      if (d >= r) return;
-      if (d < 1e-6) { ex = -v.hz; ez = v.hx; d = 1e-6; } // justo en el eje: sale de lado
-      else { ex /= d; ez /= d; }
-      p.x += ex * (r - d); p.z += ez * (r - d);
-      normal = [ex, ez];
-    });
-    return normal;
-  }
   if (choques) {
     const base = choques.empujar;
-    choques.empujar = (p, r) => { const n1 = base(p, r), n2 = empujar(p, r); return n2 || n1; };
+    choques.empujar = (p, r) => { const n1 = base(p, r), n2 = sim.empujar(p, r); return n2 || n1; };
   }
+  // La gente pregunta si viene un carro antes de cruzar y se aparta del jugador.
+  peatones?.conectar?.({ viene: sim.viene, jugador: sim.jugador });
 
-  return { grupo, actualizar, empujar, red, sim, get cantidad() { return sim.activos.length; } };
+  return { grupo, actualizar, empujar: sim.empujar, viene: sim.viene, delante: sim.delante, red, sim, get cantidad() { return sim.activos.length; } };
 }

@@ -3,9 +3,12 @@ import { attribute, varying, vec3, floor, mod, pow } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { anchoVia, andenVia } from './vias.js';
 import { crearEsqueleto, geometriasPiezas, materialPersonaje, anillo, superficie } from './personaje.js';
+import { aLoLargo, VERDE } from './semaforos.js';
 
 // Peatones: una multitud alrededor de la cámara que camina por los andenes, la Séptima peatonal y la Plaza de Bolívar,
-// más o menos según la hora. Usan el cuerpo del jugador (js/personaje.js): cada persona tiene su esqueleto de pivotes
+// más o menos según la hora. Cruzan las calles por la cebra: esperan en el borde el muñeco verde (donde hay semáforo)
+// y que no venga nada (lo pregunta js/trafico.js), y nunca se meten en un vehículo; se apartan del jugador.
+// Usan el cuerpo del jugador (js/personaje.js): cada persona tiene su esqueleto de pivotes
 // sin mallas, y lo que se dibuja es una malla instanciada por pieza del cuerpo, con un juego detallado de cerca (con
 // sombra) y uno liviano de lejos. Piel, pelo y ropa van por instancia; falda o abrigo, ruana, pelo largo, gorra,
 // sombrilla y morral son mallas instanciadas aparte. En total unas 30 llamadas a la GPU.
@@ -15,13 +18,13 @@ const RADIO = 300; // m alrededor de la cámara
 const CERCA = 45; // más cerca, cuerpo detallado y con sombra
 const ALTO_MAXIMO = 400; // con la cámara más alta que esto sobre el piso no se distinguen: no se actualizan
 const PLAZA_RADIO = 40; // la plaza es un cuadrado de 104 m girado con la cuadrícula; el círculo queda adentro, sin tocar andenes
-const ADOQUIN = 0.25; // el adoquín de la plaza va 25 cm sobre el piso (lugares.js); los de la plaza pisan encima
 const ESTATUA = 2.4; // radio del pedestal de Bolívar, que no está en los choques
 const MUSEO_ORO = [352, -380];
 const PESO_PLAZA = 1500; // la plaza cuenta como 1,5 km de andén
 const PESO_REF = 25000; // con este peso de red a la redonda se llena el máximo (a 300 m de la plaza hay unos 31.000)
 const GIRO = 4; // rad/s
-const RADIO_PERSONA = 0.28;
+const RADIO_PERSONA = 0.3; // medio ancho de hombros con los brazos
+const PACIENCIA = 60; // s esperando para cruzar antes de devolverse
 
 // ---------------------------------------------------------------------------------------------------------------
 // Cuánta gente: por hora y por zona.
@@ -58,7 +61,8 @@ const rumboHacia = (dx, dz) => Math.atan2(-dx, -dz);
 // todo sobre otra calzada (dentro(x, z), de calles.js) no se camina: es el del separador en las vías dobles, como las
 // de carros junto a los carriles de TransMilenio.
 // ---------------------------------------------------------------------------------------------------------------
-export function crearRed(vias, centroPlaza, { dentro = () => false, muro = () => 1 } = {}) {
+// semaforos (opcional): lo de js/semaforos.js, para saber en qué esquinas hay semáforo peatonal.
+export function crearRed(vias, centroPlaza, { dentro = () => false, muro = () => 1, semaforos = null } = {}) {
   const llave = (x, z) => `${x},${z}`;
   const caminable = (v) => !v.bus && (v.clase === 5 || (v.clase <= 3 && andenVia(v) > 0));
 
@@ -131,25 +135,102 @@ export function crearRed(vias, centroPlaza, { dentro = () => false, muro = () =>
     // Las distancias se miden sobre la normal en inglete, de largo k ≥ 1.
     const [lo0, hi0] = peatonal ? [0.75, w - 0.75] : [w + 0.45, w + an - 0.45];
     const lo = [[], []], hi = [[], []];
+    // La franja tampoco pisa calzadas ajenas (el separador de una avenida doble, los carriles de TransMilenio junto al
+    // Eje Ambiental): se angosta hasta donde no las toque y, si en algún punto no queda nada, ese lado no se camina.
+    // Las puntas no cuentan: junto a la esquina la franja llega al cruce.
+    const enCalzada = (i, lado, o) => dentro(x[i] + nx[i] * lado * o, z[i] + nz[i] * lado * o, 0.2);
     const lados = [-1, 1].filter((lado, s) => {
-      let contraMuro = 0, enCalzada = 0;
+      let contraMuro = 0, malos = 0;
       for (let i = 0; i < n; i++) {
         const k = Math.hypot(nx[i], nz[i]), alcance = (hi0 + 0.4) * k;
         const libre = (muro(x[i], z[i], x[i] + (nx[i] / k) * lado * alcance, z[i] + (nz[i] / k) * lado * alcance) * alcance - 0.4) / k;
-        const h = Math.max(0.3, Math.min(hi0, libre));
-        hi[s].push(h);
-        lo[s].push(Math.min(lo0, h));
+        let h = Math.max(0.3, Math.min(hi0, libre)), l = Math.min(lo0, h);
         if (libre < (peatonal ? 0.3 : w + 0.1)) contraMuro++; // en una peatonal angosta se camina por el centro
-        const m = (lo[s][i] + h) / 2;
-        if (!peatonal && dentro(x[i] + nx[i] * lado * m, z[i] + nz[i] * lado * m)) enCalzada++;
+        // Bordes libres casi siempre: solo si no, se angosta (cargar la red cuesta un tercio de segundo).
+        while (h > l && enCalzada(i, lado, h)) h -= 0.25;
+        while (l < h && enCalzada(i, lado, l)) l += 0.25;
+        if (h <= l) {
+          if (i > 0 && i < n - 1) malos++;
+          h = Math.max(0.3, Math.min(hi0, libre)); l = Math.min(lo0, h);
+        }
+        hi[s].push(h);
+        lo[s].push(l);
       }
-      return contraMuro <= n * 0.3 && enCalzada <= n * 0.5;
+      return contraMuro <= n * 0.3 && malos === 0;
     });
     return {
       iv, peatonal, ka, kb, n, x, z, nx, nz, largo, cx, cz, zona, lados, lo, hi,
       // Para aparecer: un andén por lado caminable; la peatonal, más ancha y concurrida, vale el doble.
       peso: largo.at(-1) * zona * (peatonal ? 2 : 1) * lados.length,
     };
+  }
+
+  // Calzadas que llegan a cada esquina (de carros, de servicio o de TransMilenio), para cruzarlas por la cebra. Como
+  // en vias.js: es cruce donde llegan tres o más tramos, y en las vías de carros la cebra va de radio + 0,6 a
+  // radio + 3,6 m del vértice (radio: media calzada más andén de la vía más ancha). Si el cruce siguiente queda tan
+  // cerca que no cabe la cebra, se cruza derecho.
+  const cuenta = new Map(), radio = new Map(), brazos = new Map();
+  for (const v of vias) {
+    if (v.clase > 4) continue;
+    const r = anchoVia(v) / 2 + andenVia(v);
+    v.p.forEach(([x, z], i) => {
+      const c = llave(x, z);
+      cuenta.set(c, (cuenta.get(c) || 0) + (i > 0) + (i < v.p.length - 1));
+      radio.set(c, Math.max(radio.get(c) || 0, r));
+    });
+  }
+  for (const v of vias) {
+    if (v.clase > 4) continue;
+    const w = anchoVia(v) / 2, carros = v.clase <= 3 && !v.bus;
+    v.p.forEach(([x, z], i) => {
+      const c = llave(x, z);
+      if (!nodos.has(c)) return;
+      const r = radio.get(c), cruce = cuenta.get(c) >= 3;
+      for (const s of [-1, 1]) {
+        let j = i, libre = 0, rOtro = 0;
+        while (j + s >= 0 && j + s < v.p.length) {
+          libre += Math.hypot(v.p[j + s][0] - v.p[j][0], v.p[j + s][1] - v.p[j][1]);
+          j += s;
+          if (cuenta.get(llave(...v.p[j])) >= 3) { rOtro = radio.get(llave(...v.p[j])); break; }
+        }
+        if (libre < 0.5) continue;
+        const k = i + s, l = Math.hypot(v.p[k][0] - x, v.p[k][1] - z) || 1;
+        (brazos.get(c) ?? brazos.set(c, []).get(c)).push({
+          via: v, i, s, w, r, x, z, dx: (v.p[k][0] - x) / l, dz: (v.p[k][1] - z) / l, alcance: Math.min(libre, r + 14),
+          cebra: carros && cruce && libre >= r + rOtro + 7.2,
+        });
+      }
+    });
+  }
+  // Si el paso de (px, pz) a (qx, qz) por la esquina c atraviesa una calzada, el camino va por su cebra: hasta su
+  // borde de este lado (allí se espera) y derecho al otro borde. Devuelve esos dos puntos o null.
+  function planear(px, pz, qx, qz, c) {
+    let mejor = null, tMin = Infinity;
+    for (const b of brazos.get(c) || []) {
+      for (let i = b.i, recorrido = 0; recorrido < b.alcance;) {
+        const j = i + b.s;
+        if (j < 0 || j >= b.via.p.length) break;
+        const [ax, az] = b.via.p[i], [bx, bz] = b.via.p[j], rx = qx - px, rz = qz - pz, sx = bx - ax, sz = bz - az;
+        const l = Math.hypot(sx, sz), den = rx * sz - rz * sx;
+        if (l > 1e-6 && Math.abs(den) > 1e-9) {
+          const t = ((ax - px) * sz - (az - pz) * sx) / den, u = ((ax - px) * rz - (az - pz) * rx) / den;
+          if (t > 0 && t < 1 && u >= 0 && u <= 1 && t < tMin) { tMin = t; mejor = { b, a: recorrido + u * l }; }
+        }
+        recorrido += l;
+        i = j;
+      }
+    }
+    if (!mejor) return null;
+    const { b } = mejor;
+    // Por la cebra (con algo de azar a lo ancho de sus 3 m para que no hagan fila india) o, sin ella, por donde iba.
+    const p = aLoLargo(b.via, b.i, b.s, b.cebra ? b.r + 2.1 + (Math.random() * 2 - 1) : Math.max(0.5, mejor.a));
+    if (!p) return null;
+    const nx = -p.tz, nz = p.tx, lado = (x, z) => ((x - p.x) * nx + (z - p.z) * nz >= 0 ? 1 : -1);
+    const ladoP = lado(px, pz), ladoQ = lado(qx, qz), off = b.w + 0.6 + Math.random() * 0.4;
+    // Semáforo peatonal solo en las cebras de los cruces que lo tienen; TransMilenio y las de servicio, a ojo.
+    const grupo = b.cebra && semaforos ? semaforos.grupoEn(b.x, b.z) : null;
+    const x0 = p.x + nx * off * ladoP, z0 = p.z + nz * off * ladoP, x1 = p.x + nx * off * ladoQ, z1 = p.z + nz * off * ladoQ;
+    return [{ x: x0, z: z0, cruce: null }, { x: x1, z: z1, cruce: { x0, z0, x1, z1, grupo, eje: grupo ? semaforos.eje(grupo, b.dx, b.dz) : 0 } }];
   }
 
   const aristas = [], ady = new Map();
@@ -212,7 +293,8 @@ export function crearRed(vias, centroPlaza, { dentro = () => false, muro = () =>
     let j = 0;
     while (j < a.n - 2 && a.largo[j + 1] < u) j++;
     const dx = a.x[j + 1] - a.x[j], dz = a.z[j + 1] - a.z[j], l = Math.hypot(dx, dz) || 1, t = Math.min(1, (u - a.largo[j]) / l);
-    Object.assign(p, { modo: 'calle', arista: a, lado: de(a.lados), carril: Math.random() * 2 - 1, dir: Math.random() < 0.5 ? -1 : 1, pausa: 0, mirar: null });
+    Object.assign(p, { modo: 'calle', arista: a, lado: de(a.lados), carril: Math.random() * 2 - 1, dir: Math.random() < 0.5 ? -1 : 1, pausa: 0, mirar: null, antes: null });
+    p.ruta.length = 0;
     const off = corrimiento(a, p.lado, j, p.carril) * (1 - t) + corrimiento(a, p.lado, j + 1, p.carril) * t;
     p.x = a.x[j] + dx * t - (dz / l) * off;
     p.z = a.z[j] + dz * t + (dx / l) * off;
@@ -220,11 +302,11 @@ export function crearRed(vias, centroPlaza, { dentro = () => false, muro = () =>
     objetivo(p);
   }
 
-  // Llegó a su punto: el siguiente del tramo o, en la esquina, otro tramo. Devuelve cuántos metros hay hasta el
-  // primer punto del tramo nuevo (más de unos 4 m es cruzar una calle) o 0 si sigue por el mismo.
+  // Llegó a su punto: el siguiente del tramo o, en la esquina, otro tramo; si para llegar a él hay que atravesar una
+  // calzada, deja en p.ruta el paso por la cebra. Devuelve true si cambió de tramo.
   function siguiente(p) {
     const a = p.arista, i2 = p.i + p.dir;
-    if (i2 >= 0 && i2 < a.n) { p.i = i2; objetivo(p); return 0; }
+    if (i2 >= 0 && i2 < a.n) { p.i = i2; objetivo(p); return false; }
     const extremo = p.dir > 0 ? 1 : 0, nodo = extremo ? a.kb : a.ka;
     // Dirección con la que llega.
     const ia = Math.max(0, Math.min(a.n - 2, p.dir > 0 ? a.n - 2 : 0));
@@ -241,20 +323,32 @@ export function crearRed(vias, centroPlaza, { dentro = () => false, muro = () =>
       if (valor > puntaje) { puntaje = valor; mejor = { b, dir, i0 }; }
     }
     const px = p.ox, pz = p.oz;
+    p.antes = { arista: a, i: p.i, dir: p.dir, lado: p.lado };
     if (!mejor || Math.random() < 0.04) {
       // Calle ciega (o ganas de devolverse): cruza al otro andén, si lo hay, y vuelve por donde vino.
       p.dir = -p.dir;
       if (a.lados.length > 1) p.lado = -p.lado;
-      objetivo(p);
-      return Math.hypot(p.ox - px, p.oz - pz);
+    } else {
+      // Del lado del tramo nuevo que quede más cerca: la misma esquina o, si no, cruzando una sola calle.
+      const { b, dir, i0 } = mejor;
+      const lejos = (lado) => { const o = corrimiento(b, lado, i0, p.carril); return (b.x[i0] + b.nx[i0] * o - px) ** 2 + (b.z[i0] + b.nz[i0] * o - pz) ** 2; };
+      const lado = b.lados.length > 1 ? (lejos(1) <= lejos(-1) ? 1 : -1) : b.lados[0];
+      Object.assign(p, { arista: b, dir, i: i0, lado });
     }
-    // Del lado del tramo nuevo que quede más cerca: la misma esquina o, si no, cruzando una sola calle.
-    const { b, dir, i0 } = mejor;
-    const lejos = (lado) => { const o = corrimiento(b, lado, i0, p.carril); return (b.x[i0] + b.nx[i0] * o - px) ** 2 + (b.z[i0] + b.nz[i0] * o - pz) ** 2; };
-    const lado = b.lados.length > 1 ? (lejos(1) <= lejos(-1) ? 1 : -1) : b.lados[0];
-    Object.assign(p, { arista: b, dir, i: i0, lado });
     objetivo(p);
-    return Math.hypot(p.ox - px, p.oz - pz);
+    p.ruta.length = 0;
+    const ruta = planear(px, pz, p.ox, p.oz, nodo);
+    if (ruta) p.ruta.push(...ruta);
+    return true;
+  }
+  // Lleva mucho esperando en el borde (un carro varado en la cebra, una avenida que no da tregua): se devuelve por
+  // el tramo de donde venía.
+  function devolver(p) {
+    p.ruta.length = 0;
+    if (p.antes) { Object.assign(p, p.antes); p.antes = null; }
+    p.dir = -p.dir;
+    p.i = Math.max(0, Math.min(p.arista.n - 1, p.i + p.dir));
+    objetivo(p);
   }
 
   // Plaza: puntos al azar dentro del círculo, lejos del pedestal.
@@ -280,11 +374,14 @@ export function crearRed(vias, centroPlaza, { dentro = () => false, muro = () =>
   }
   function ponerEnPlaza(p) {
     const ang = Math.random() * Math.PI * 2, r = ESTATUA + 1 + Math.sqrt(Math.random()) * (plaza.r - ESTATUA - 1);
-    Object.assign(p, { modo: 'plaza', arista: null, x: plaza.x + Math.cos(ang) * r, z: plaza.z + Math.sin(ang) * r, pausa: 0, mirar: null });
+    Object.assign(p, { modo: 'plaza', arista: null, x: plaza.x + Math.cos(ang) * r, z: plaza.z + Math.sin(ang) * r, pausa: 0, mirar: null, antes: null });
+    p.ruta.length = 0;
     if (Math.random() < 0.25) pasearPlaza(p); else destinoPlaza(p);
   }
 
-  return { aristas, ady, plaza, cerca, sortear, ponerEnArista, ponerEnPlaza, siguiente, pasearPlaza };
+  // ¿El punto está sobre una calzada? (sin la gracia de medio metro que usan los carros contra el bordillo)
+  const enCalzada = (x, z) => dentro(x, z, 0);
+  return { aristas, ady, plaza, brazos, cerca, sortear, ponerEnArista, ponerEnPlaza, siguiente, devolver, pasearPlaza, planear, enCalzada };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -318,9 +415,11 @@ const FALDA = 0, RUANA = 1, PELO_LARGO = 2, GORRA = 3, SOMBRILLA = 4, MORRAL = 5
 export function vestir(p, hora) {
   const r = Math.random;
   const mujer = r() < 0.5, colegio = hora > 6 && hora < 18.5 && r() < 0.1, mayor = !colegio && r() < 0.12;
-  // Escalas de la raíz: alto, y ancho y fondo por contextura (las mujeres un poco más angostas).
-  p.alto = colegio ? 0.8 + 0.12 * r() : (mujer ? 0.93 : 0.98) + 0.08 * r() - (mayor ? 0.03 : 0);
-  p.ancho = (mujer ? 0.92 : 1) * (0.9 + 0.22 * r());
+  // Escalas de la raíz (el cuerpo mide 1,72 m): estaturas de Colombia, hombres de 1,62 a 1,82 m y mujeres de 1,50 a
+  // 1,68 m; escolares de 1,25 a 1,60 m. El ancho va con la estatura, más o menos según la contextura.
+  p.alto = colegio ? 0.73 + 0.2 * r() : mujer ? 0.872 + 0.105 * r() : 0.942 + 0.116 * r();
+  if (mayor) p.alto -= 0.02;
+  p.ancho = p.alto * (mujer ? 0.94 : 1) * (0.93 + 0.14 * r());
   p.velDeseada = mayor ? 0.85 + 0.25 * r() : colegio ? 1.3 + 0.35 * r() : 1.15 + 0.4 * r();
   if (p.modo === 'plaza') p.velDeseada *= 0.8; // pasean
   const piel = de(PIEL), pelo = mayor ? de(CANAS) : de(PELO), extras = [];
@@ -402,11 +501,14 @@ function materialMultitud() {
 // ---------------------------------------------------------------------------------------------------------------
 // La multitud.
 // ---------------------------------------------------------------------------------------------------------------
-export function crearPeatones({ vias, calles, choques, lugares }) {
+// semaforos (opcional): js/semaforos.js. js/trafico.js se conecta después (conectar) para avisar qué viene.
+export function crearPeatones({ vias, calles, choques, lugares, semaforos = null }) {
   const red = crearRed(vias, lugares.centroPlaza, {
     dentro: calles.dentro,
     muro: (x0, z0, x1, z1) => choques.rayo(x0, -1e9, z0, x1, -1e9, z1), // tan bajo que cuenta cualquier muro
+    semaforos,
   });
+  let trafico = null; // { viene(x0, z0, x1, z1, seg), jugador() }
   const plaza = red.plaza;
   const grupo = new THREE.Group();
   grupo.name = 'Peatones';
@@ -451,14 +553,16 @@ export function crearPeatones({ vias, calles, choques, lugares }) {
     id, activo: false, esq: crearEsqueleto(), mats: OFF.map(() => new Float32Array(16)), accMats: [],
     ropa: new Float32Array(4), zapatos: 0, accesorios: [],
     x: 0, y: 0, z: 0, rumbo: 0, vel: 0, velDeseada: 1.3, pausa: 0, mirar: null, modo: 'calle',
-    arista: null, i: 0, dir: 1, lado: 1, carril: 0, ox: 0, oz: 0,
+    arista: null, i: 0, dir: 1, lado: 1, carril: 0, ox: 0, oz: 0, antes: null,
+    ruta: [], cruce: null, enCruce: false, permiso: false, revisar: 0, reaccion: 0, espera: 0, esPersona: true,
     alto: 1, ancho: 1, sombrilla: false, acumulado: 0, atasco: 0, saltos: 0, nuevo: false, dist: 0, ve: false,
   }));
   const libres = gente.map((p) => p).reverse();
   let activos = 0, cuadro = 0, cand = null, cx = 0, cz = 0;
   const frustum = new THREE.Frustum(), esfera = new THREE.Sphere(new THREE.Vector3(), 2), _m = new THREE.Matrix4(), _c = new THREE.Color();
 
-  const piso = (p) => calles.piso(p.x, p.z) + (p.modo === 'plaza' ? ADOQUIN : 0);
+  // calles.piso ya incluye las losas de los lugares (la Plaza de Bolívar): nada que sumar a mano.
+  const piso = (p) => calles.piso(p.x, p.z);
   const seVe = (p) => { esfera.center.set(p.x, p.y + 1, p.z); return frustum.intersectsSphere(esfera); };
 
   function quitar(p) {
@@ -489,6 +593,7 @@ export function crearPeatones({ vias, calles, choques, lugares }) {
         a.offset = a.largo === 1 ? OFF[extras[a.tipo].pieza] : new THREE.Matrix4().makeScale(1, a.largo, 1).multiply(OFF[extras[a.tipo].pieza]);
       }
       Object.assign(p, { activo: true, nuevo: true, acumulado: 0, atasco: 0, saltos: 0, vel: p.pausa > 0 ? 0 : p.velDeseada, rumbo: p.mirar ?? rumboHacia(p.ox - p.x, p.oz - p.z) });
+      pierna(p);
       return;
     }
   }
@@ -521,43 +626,104 @@ export function crearPeatones({ vias, calles, choques, lugares }) {
 
   function llegar(p) {
     if (p.modo === 'plaza') return red.pasearPlaza(p);
-    const cruce = red.siguiente(p);
-    // En la esquina, antes de cruzar, a veces espera mirando al otro lado.
-    if (cruce > 4 && Math.random() < 0.6) {
-      p.pausa = 0.4 + Math.random() * 3;
-      p.mirar = rumboHacia(p.ox - p.x, p.oz - p.z);
-    } else if (cruce > 0 && Math.random() < 0.03) {
-      p.pausa = 3 + Math.random() * 7; // se para a mirar algo
+    const esquina = red.siguiente(p);
+    if (esquina && !p.ruta.length && Math.random() < 0.03) {
+      p.pausa = 3 + Math.random() * 7; // se para a mirar algo (nunca a la mitad de una calle)
       p.mirar = null;
     }
   }
 
+  // Siguiente punto: el primero de la ruta (el paso por la cebra) o el del tramo.
+  const destinoX = (p) => (p.ruta.length ? p.ruta[0].x : p.ox), destinoZ = (p) => (p.ruta.length ? p.ruta[0].z : p.oz);
+  // Pierna nueva, de donde está al siguiente punto. Si es el paso por una cebra, o si baja a una calzada desde fuera
+  // de ella, es un cruce: se espera en el borde. Quien ya va por la calzada sigue sin pararse.
+  function pierna(p) {
+    p.enCruce = false; p.espera = 0; p.permiso = false; p.revisar = 0;
+    const w = p.ruta[0];
+    if (w?.cruce) { p.cruce = w.cruce; return; }
+    p.cruce = null;
+    if (p.modo !== 'calle' || red.enCalzada(p.x, p.z)) return;
+    const x1 = destinoX(p), z1 = destinoZ(p);
+    for (const f of [0.35, 0.7, 1]) {
+      if (red.enCalzada(p.x + (x1 - p.x) * f, p.z + (z1 - p.z) * f)) { p.cruce = { x0: p.x, z0: p.z, x1, z1, grupo: null, eje: 0 }; return; }
+    }
+  }
+  // ¿Puede bajar a la calzada? Con semáforo, solo con el muñeco verde fijo; y nunca si viene un vehículo (con el
+  // verde, solo los que ya no alcanzarían a parar; sin semáforo, los que llegarían mientras cruza).
+  function permitido(c, vel) {
+    if (c.grupo && !semaforos.puedeCruzar(c.grupo, c.eje)) return false;
+    if (!trafico) return true;
+    const largo = Math.hypot(c.x1 - c.x0, c.z1 - c.z0);
+    return !trafico.viene(c.x0, c.z0, c.x1, c.z1, c.grupo ? 2.5 : largo / Math.max(0.8, vel) + 1.5);
+  }
+
   function mover(p, dt) {
     if (p.pausa > 0) p.pausa -= dt;
-    const quiere = p.pausa > 0 ? 0 : p.velDeseada;
-    p.vel += Math.max(-3 * dt, Math.min(1.5 * dt, quiere - p.vel));
-    let dx = p.ox - p.x, dz = p.oz - p.z;
+    let dx = destinoX(p) - p.x, dz = destinoZ(p) - p.z;
     for (let n = 0; n < 4 && p.pausa <= 0 && dx * dx + dz * dz < 0.36; n++) {
-      llegar(p);
+      if (p.ruta.length) p.ruta.shift(); else llegar(p);
+      pierna(p);
       p.saltos = 0;
-      dx = p.ox - p.x; dz = p.oz - p.z;
+      dx = destinoX(p) - p.x; dz = destinoZ(p) - p.z;
     }
-    // Camina hacia donde mira y voltea a lo sumo GIRO: las esquinas salen redondeadas.
+    let quiere = p.pausa > 0 ? 0 : p.velDeseada;
+    // En el borde: espera el verde y que no venga nada; arranca con un poco de demora, cada uno a su tiempo.
+    if (p.cruce && !p.enCruce) {
+      p.revisar -= dt;
+      if (p.revisar <= 0) { p.revisar = 0.2; p.permiso = permitido(p.cruce, p.velDeseada); }
+      if (!p.permiso) p.reaccion = 0.2 + Math.random() * 0.9;
+      else if ((p.reaccion -= dt) <= 0) p.enCruce = true;
+      if (!p.enCruce) {
+        quiere = 0;
+        if ((p.espera += dt) > PACIENCIA) { red.devolver(p); pierna(p); dx = destinoX(p) - p.x; dz = destinoZ(p) - p.z; }
+      }
+    }
+    // Cruzando con el muñeco titilando (o ya en rojo): a paso rápido.
+    if (p.enCruce && p.cruce?.grupo && semaforos.peatonal(p.cruce.grupo, p.cruce.eje) !== VERDE) quiere *= 1.5;
+    p.vel += Math.max(-3 * dt, Math.min(1.5 * dt, quiere - p.vel));
+    // Camina hacia donde mira y voltea a lo sumo GIRO: las esquinas salen redondeadas. Esperando, mira al otro lado.
     const deseado = p.pausa > 0 ? p.mirar ?? p.rumbo : rumboHacia(dx, dz);
     p.rumbo += Math.max(-GIRO * dt, Math.min(GIRO * dt, envolver(deseado - p.rumbo)));
     const fx = -Math.sin(p.rumbo), fz = -Math.cos(p.rumbo), x0 = p.x, z0 = p.z;
     p.x += fx * p.vel * dt;
     p.z += fz * p.vel * dt;
     esquivar(p, fx, fz, dt);
+    apartarse(p, dt);
     if (p.modo === 'plaza') {
       const ex = p.x - plaza.x, ez = p.z - plaza.z, d = Math.hypot(ex, ez);
       if (d < ESTATUA && d > 1e-6) { p.x = plaza.x + (ex / d) * ESTATUA; p.z = plaza.z + (ez / d) * ESTATUA; }
     }
+    // Muros, árboles, postes, carros estacionados y, encadenados por js/trafico.js, el tráfico y TransMilenio.
     choques.empujar(p, RADIO_PERSONA);
     // Atascado contra un muro o un árbol: salta al siguiente punto. Si sigue pasando y no se ve, se quita.
     if (quiere > 0 && Math.hypot(p.x - x0, p.z - z0) < 0.3 * quiere * dt) p.atasco += dt; else p.atasco = 0;
-    if (p.atasco > 2.5) { p.atasco = 0; p.saltos++; llegar(p); }
+    if (p.atasco > 2.5) {
+      p.atasco = 0; p.saltos++;
+      if (p.ruta.length) p.ruta.shift(); else llegar(p);
+      pierna(p);
+    }
     p.y = piso(p);
+  }
+
+  // Del jugador (a pie, en bici o en carro): si viene hacia la persona, ella se hace a un lado de su paso; y nunca
+  // queda dentro de su cuerpo. Lo da js/trafico.js con su rumbo, su velocidad y su cápsula.
+  function apartarse(p, dt) {
+    const j = trafico?.jugador();
+    if (!j) return;
+    const [a, b] = j.T.capsula, ax = j.cx + j.hx * a, az = j.cz + j.hz * a;
+    const t = Math.max(0, Math.min(b - a, (p.x - ax) * j.hx + (p.z - az) * j.hz));
+    let ex = p.x - ax - j.hx * t, ez = p.z - az - j.hz * t, d = Math.hypot(ex, ez);
+    const r = RADIO_PERSONA + j.T.radioChoque;
+    if (d > r + 4) return;
+    if (d < 1e-6) { ex = -j.hz; ez = j.hx; d = 1e-6; } else { ex /= d; ez /= d; }
+    const vj = Math.hypot(j.vx, j.vz);
+    if (vj > 0.4 && (p.x - j.cx) * j.vx + (p.z - j.cz) * j.vz > 0) {
+      // A un lado de la línea por donde viene, más rápido cuanto más cerca.
+      const lado = (p.x - j.cx) * -j.vz + (p.z - j.cz) * j.vx >= 0 ? 1 : -1, k = Math.min(1.6, 0.5 + vj * 0.4) * dt * Math.min(1, (r + 4 - d) / 3);
+      p.x += (-j.vz / vj) * lado * k;
+      p.z += (j.vx / vj) * lado * k;
+    }
+    if (d < r) { p.x += ex * (r - d); p.z += ez * (r - d); }
   }
 
   function posar(p) {
@@ -642,5 +808,33 @@ export function crearPeatones({ vias, calles, choques, lugares }) {
     for (const e of extras) { e.malla.count = e.n; e.malla.instanceMatrix.needsUpdate = true; e.tono.needsUpdate = true; }
   }
 
-  return { grupo, actualizar, get cantidad() { return activos; } };
+  // El jugador no atraviesa a la gente: choques.empujar también lo saca de las personas. La multitud no se mira aquí
+  // (se separa en esquivar).
+  const empujarBase = choques.empujar;
+  choques.empujar = (q, radio) => {
+    const n1 = empujarBase(q, radio);
+    if (q.esPersona || !rejilla.size) return n1;
+    let normal = null;
+    const r = radio + RADIO_PERSONA, k = Math.ceil(r / 2);
+    const ix = Math.floor(q.x / 2), iz = Math.floor(q.z / 2);
+    for (let a = -k; a <= k; a++) {
+      for (let b = -k; b <= k; b++) {
+        for (const o of rejilla.get((ix + a + 8192) * 16384 + iz + b + 8192) || []) {
+          if (!o.activo) continue;
+          const ex = q.x - o.x, ez = q.z - o.z, d = Math.hypot(ex, ez);
+          if (d >= r || d < 1e-6) continue;
+          q.x += (ex / d) * (r - d); q.z += (ez / d) * (r - d);
+          normal = [ex / d, ez / d];
+        }
+      }
+    }
+    return normal || n1;
+  };
+
+  return {
+    grupo, actualizar, gente,
+    // js/trafico.js: { viene(x0, z0, x1, z1, seg), jugador() }.
+    conectar(t) { trafico = t; },
+    get cantidad() { return activos; },
+  };
 }

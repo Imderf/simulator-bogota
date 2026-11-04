@@ -426,7 +426,7 @@ export function estacionar({ vias, terreno, choques, centro, radio = 1300, maxim
       const [ax, az] = p[i], [bx, bz] = p[i + 1], dx = bx - ax, dz = bz - az, l = Math.hypot(dx, dz);
       if (l < 30 || Math.hypot(ax - centro[0], az - centro[1]) > radio) continue;
       const ux = dx / l, uz = dz / l, nx = -uz, nz = ux;
-      for (let d = 12; d < l - 12; d += 6.5 + azar() * 5) {
+      for (let d = 16; d < l - 16; d += 6.5 + azar() * 5) {
         if (azar() > 0.42) continue;
         const lado = azar() < 0.5 ? 1 : -1, off = anchoVia(via) / 2 - 1.05;
         const x = ax + ux * d + nx * off * lado, z = az + uz * d + nz * off * lado;
