@@ -45,7 +45,8 @@ export function crearChoques(muros, troncos = []) {
         normal = [ex / d, ez / d];
         movido = true;
       };
-      recorrer(p.x - radio, p.z - radio, p.x + radio, p.z + radio, (c) => {
+      // El margen de 1,2 m alcanza círculos (troncos, carros) cuyo centro cae en una celda vecina.
+      recorrer(p.x - radio - 1.2, p.z - radio - 1.2, p.x + radio + 1.2, p.z + radio + 1.2, (c) => {
         for (const [ax, az, bx, bz] of c.segs) {
           const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
           const t = Math.max(0, Math.min(1, ((p.x - ax) * dx + (p.z - az) * dz) / l2));
@@ -74,5 +75,9 @@ export function crearChoques(muros, troncos = []) {
     return mejor;
   }
 
-  return { empujar, rayo };
+  // Agrega un círculo [x, z, radio] después de creada la rejilla (carros estacionados). El arreglo queda
+  // compartido: ponerle radio negativo lo saca de los choques.
+  const agregar = (circ) => celda(Math.floor(circ[0] / CELDA), Math.floor(circ[1] / CELDA)).troncos.push(circ);
+
+  return { empujar, rayo, agregar };
 }

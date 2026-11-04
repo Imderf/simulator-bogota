@@ -26,7 +26,14 @@
   <link rel="modulepreload" href="./js/sol.js" />
   <link rel="modulepreload" href="./js/choques.js" />
   <link rel="modulepreload" href="./js/jugador.js" />
-  <script type="module" src="./js/main.js"></script>
+  <link rel="modulepreload" href="./js/vehiculos.js" />
+  <script type="module">
+    // Solo para computador. En celular se pide abrirlo en un computador o con "Sitio de escritorio":
+    // en ese modo el navegador se presenta como de escritorio y el simulador carga normal.
+    const celular = navigator.userAgentData?.mobile ?? /Android|iPhone|iPod|Mobile|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (celular) document.documentElement.classList.add('solo-escritorio');
+    else import('./js/main.js');
+  </script>
   <link rel="stylesheet" href="./css/estilo.css" />
 </head>
 <body>
@@ -46,13 +53,13 @@
   </nav>
 
   <p id="ayuda">
-    <span class="solo-caminar">W A S D o flechas · Shift para correr · E para subir al taxi · V para volar</span>
+    <span class="solo-caminar">W A S D o flechas · Shift para correr · E para subirse al carro más cercano · V para volar</span>
     <span class="solo-manejar">W acelera · S frena y retrocede · A D giran · Espacio frena · E para bajarse</span>
   </p>
 
   <div id="tactil">
     <div id="joystick" aria-hidden="true"><span></span></div>
-    <button id="taxi">Subir al taxi</button>
+    <button id="taxi">Subir al carro</button>
   </div>
 
   <div id="reloj">
@@ -67,6 +74,25 @@
       <div id="carga-pista"><div id="carga-barra"></div></div>
     </div>
   </div>
+
+  <section id="escritorio" aria-labelledby="escritorio-titulo">
+    <div>
+      <h1 id="escritorio-titulo">Simulador Bogotá se usa en computador</h1>
+      <p>Ábrelo desde un computador para recorrer la ciudad a pie, en carro o volando.</p>
+      <p>Si quieres verlo en este celular, activa el sitio de escritorio en tu navegador:</p>
+      <ul>
+        <li><strong>Chrome:</strong> menú ⋮ y luego «Sitio de escritorio».</li>
+        <li><strong>Safari:</strong> botón «aA» y luego «Solicitar sitio web de escritorio».</li>
+      </ul>
+      <button id="copiar-enlace" type="button">Copiar el enlace</button>
+    </div>
+  </section>
+  <script>
+    document.querySelector('#copiar-enlace').addEventListener('click', async (e) => {
+      try { await navigator.clipboard.writeText(location.href); e.target.textContent = 'Enlace copiado'; }
+      catch { e.target.textContent = location.href; }
+    });
+  </script>
 
   <noscript>Necesitas JavaScript para ver el simulador.</noscript>
 </body>

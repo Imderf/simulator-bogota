@@ -1,7 +1,9 @@
 import * as THREE from 'three/webgpu';
 import { noche } from './edificios.js';
+import { crearVehiculo, TIPOS } from './vehiculos.js';
 
-// Recorrer la ciudad a pie o en taxi. El personaje y el carro se arman con piezas simples: no hay modelos.
+// Recorrer la ciudad a pie o en carro. El personaje se arma con piezas simples y los carros salen de vehiculos.js:
+// no hay modelos.
 
 const mat = (color, extra = {}) => new THREE.MeshStandardNodeMaterial({ color, roughness: 0.8, ...extra });
 const pieza = (geo, material, x, y, z, padre) => {
@@ -53,50 +55,6 @@ function crearPersonaje() {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Taxi amarillo, compacto como los de Bogotá: unos 3,9 m de largo. Mira hacia -z.
-// ---------------------------------------------------------------------------------------------------------------
-function crearTaxi() {
-  const raiz = new THREE.Group();
-  raiz.name = 'Taxi';
-  const amarillo = mat(0xf2bf16, { roughness: 0.35, metalness: 0.1 });
-  const vidrio = mat(0x1d2730, { roughness: 0.1 });
-  const negro = mat(0x161616, { roughness: 0.9 });
-  const rin = mat(0x9a9a9a, { roughness: 0.4, metalness: 0.5 });
-  const faro = new THREE.MeshStandardNodeMaterial({ color: 0xfff6dc, emissive: 0xfff0c8, emissiveIntensity: 0.2 });
-  const piloto = new THREE.MeshStandardNodeMaterial({ color: 0x8a1010, emissive: 0xff2020, emissiveIntensity: 0.2 });
-  const carroceria = new THREE.Group();
-  raiz.add(carroceria);
-  pieza(new THREE.BoxGeometry(1.66, 0.62, 3.9), amarillo, 0, 0.62, 0, carroceria);
-  pieza(new THREE.BoxGeometry(1.5, 0.52, 1.95), amarillo, 0, 1.18, 0.25, carroceria);
-  pieza(new THREE.BoxGeometry(1.52, 0.4, 1.7), vidrio, 0, 1.2, 0.25, carroceria);
-  pieza(new THREE.BoxGeometry(1.42, 0.38, 0.06), vidrio, 0, 1.17, -0.72, carroceria).rotation.x = -0.45;
-  pieza(new THREE.BoxGeometry(1.7, 0.18, 0.12), negro, 0, 0.38, -1.96, carroceria);
-  pieza(new THREE.BoxGeometry(1.7, 0.18, 0.12), negro, 0, 0.38, 1.96, carroceria);
-  // Franja de cuadros a los lados y letrero TAXI en el techo.
-  for (const s of [-1, 1]) for (let i = 0; i < 9; i++) pieza(new THREE.BoxGeometry(0.02, 0.07, 0.16), i % 2 ? negro : amarillo, s * 0.84, 0.72, -1.3 + i * 0.32, carroceria);
-  pieza(new THREE.BoxGeometry(0.7, 0.16, 0.22), mat(0xfaf6e8, { emissive: 0xfff1b0, emissiveIntensity: 0.3 }), 0, 1.52, 0.2, carroceria);
-  const faros = [-0.6, 0.6].map((x) => pieza(new THREE.BoxGeometry(0.34, 0.14, 0.05), faro, x, 0.7, -1.96, carroceria));
-  [-0.62, 0.62].forEach((x) => pieza(new THREE.BoxGeometry(0.3, 0.12, 0.05), piloto, x, 0.72, 1.96, carroceria));
-  const ruedas = [];
-  for (const [x, z] of [[-0.78, -1.25], [0.78, -1.25], [-0.78, 1.22], [0.78, 1.22]]) {
-    const eje = new THREE.Group();
-    eje.position.set(x, 0.31, z);
-    raiz.add(eje);
-    const rueda = new THREE.Group();
-    eje.add(rueda);
-    pieza(new THREE.CylinderGeometry(0.31, 0.31, 0.2, 14).rotateZ(Math.PI / 2), negro, 0, 0, 0, rueda);
-    pieza(new THREE.CylinderGeometry(0.17, 0.17, 0.21, 10).rotateZ(Math.PI / 2), rin, 0, 0, 0, rueda);
-    ruedas.push({ eje, rueda, delantera: z < 0 });
-  }
-  // Luz de los faros, sin sombra para que no pese.
-  const luz = new THREE.SpotLight(0xfff1d0, 0, 60, 0.5, 0.6, 1.2);
-  luz.position.set(0, 0.8, -1.9);
-  luz.target.position.set(0, -0.6, -14);
-  raiz.add(luz, luz.target);
-  return { raiz, carroceria, ruedas, luz, faro, piloto };
-}
-
-// ---------------------------------------------------------------------------------------------------------------
 // Controles: teclado y joystick táctil. Devuelven avance (-1 a 1), giro (-1 a 1) y correr.
 // ---------------------------------------------------------------------------------------------------------------
 function crearControles(elJoystick) {
@@ -140,15 +98,32 @@ function crearControles(elJoystick) {
 // ---------------------------------------------------------------------------------------------------------------
 // El recorrido: modos, física y cámara.
 // ---------------------------------------------------------------------------------------------------------------
-export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoystick, lienzo }) {
-  const persona = crearPersonaje(), taxi = crearTaxi();
-  escena.add(persona.raiz, taxi.raiz);
+export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoystick, lienzo, estacionados }) {
+  const persona = crearPersonaje();
+  escena.add(persona.raiz);
   const controles = crearControles(elJoystick);
+  // v es el carro que se maneja (o el último que se manejó). Los que quedan quietos fuera de las instancias
+  // van en `sueltos`, con círculos de choque para que no se puedan atravesar a pie.
+  let v = crearVehiculo('taxi', TIPOS.taxi.colores[0]);
+  escena.add(v.raiz);
+  const sueltos = [];
+  const soltar = (veh, x, z, rumbo) => {
+    veh.pose = { x, z, rumbo };
+    veh.circulos = [-1, 1].map((k) => [x - Math.sin(rumbo) * k * veh.largo * 0.27, z - Math.cos(rumbo) * k * veh.largo * 0.27, veh.ancho * 0.52]);
+    veh.circulos.forEach(choques.agregar);
+    if (!sueltos.includes(veh)) sueltos.push(veh);
+  };
+  const tomar = (veh) => {
+    veh.circulos?.forEach((circ) => { circ[2] = -10; });
+    const i = sueltos.indexOf(veh);
+    if (i >= 0) sueltos.splice(i, 1);
+  };
 
   const p = { x: inicio.x, z: inicio.z, rumbo: inicio.rumbo, vel: 0 };
   const c = { x: inicio.x + 9, z: inicio.z + 4, rumbo: inicio.rumbo, vel: 0, giro: 0, rodado: 0,
     y: null, vy: 0, cabeceo: 0, alabeo: 0, vCabeceo: 0, vAlabeo: 0 };
   choques.empujar(c, 2.1);
+  soltar(v, c.x, c.z, c.rumbo);
   let modo = 'volar';
   const camPos = new THREE.Vector3(), mira = new THREE.Vector3();
   const colocar = () => {
@@ -161,10 +136,11 @@ export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoy
   const colocarTaxi = (dt = 0) => {
     const sx = Math.sin(c.rumbo), sz = Math.cos(c.rumbo), lx = Math.cos(c.rumbo), lz = -Math.sin(c.rumbo);
     const rueda = (adelante, lado) => terreno.altura(c.x - sx * adelante + lx * lado, c.z - sz * adelante + lz * lado);
-    const di = rueda(1.25, -0.78), dd = rueda(1.25, 0.78), ti = rueda(-1.22, -0.78), td = rueda(-1.22, 0.78);
+    const za = -v.ruedas[0].eje.position.z, zb = v.ruedas.at(-1).eje.position.z, lado = Math.abs(v.ruedas[0].eje.position.x);
+    const di = rueda(za, -lado), dd = rueda(za, lado), ti = rueda(-zb, -lado), td = rueda(-zb, lado);
     const yMeta = (di + dd + ti + td) / 4;
-    const cabeceoMeta = Math.atan2((di + dd) / 2 - (ti + td) / 2, 2.47);
-    const alabeoMeta = Math.atan2((di + ti) / 2 - (dd + td) / 2, 1.56);
+    const cabeceoMeta = Math.atan2((di + dd) / 2 - (ti + td) / 2, za + zb);
+    const alabeoMeta = Math.atan2((di + ti) / 2 - (dd + td) / 2, lado * 2);
     if (c.y === null || dt === 0) { c.y = yMeta; c.cabeceo = cabeceoMeta; c.alabeo = alabeoMeta; }
     else {
       const resorte = (v, vel, meta, k, amort) => { const a = (meta - v) * k - vel * amort; return [v + (vel + a * dt) * dt, vel + a * dt]; };
@@ -173,27 +149,58 @@ export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoy
       [c.alabeo, c.vAlabeo] = resorte(c.alabeo, c.vAlabeo, alabeoMeta - c.giro * Math.abs(c.vel) * 0.004, 90, 11);
       if (c.y < yMeta - 0.15) { c.y = yMeta - 0.15; c.vy = Math.max(0, c.vy); }
     }
-    taxi.raiz.position.set(c.x, c.y, c.z);
-    taxi.raiz.rotation.set(0, c.rumbo, 0);
-    taxi.raiz.rotateX(c.cabeceo);
-    taxi.raiz.rotateZ(c.alabeo);
+    v.raiz.position.set(c.x, c.y, c.z);
+    v.raiz.rotation.set(0, c.rumbo, 0);
+    v.raiz.rotateX(c.cabeceo);
+    v.raiz.rotateZ(c.alabeo);
   };
   c.inercia = 0;
   colocar();
 
+  const usar = (veh, x, z, rumbo) => {
+    tomar(veh);
+    v = veh;
+    Object.assign(c, { x, z, rumbo, vel: 0, giro: 0, y: null, vy: 0, vCabeceo: 0, vAlabeo: 0, inercia: 0, velAntes: 0 });
+  };
+
   function cambiar(nuevo) {
     if (nuevo === modo) return modo;
     if (nuevo === 'manejar') {
-      // Si el taxi quedó lejos, aparece junto al personaje.
-      if (Math.hypot(c.x - p.x, c.z - p.z) > 25 || modo === 'volar') {
-        const lado = modo === 'volar' ? 0 : 3; // desde Volar el taxi aparece sobre la calle misma
-        c.x = p.x + Math.cos(p.rumbo) * lado; c.z = p.z - Math.sin(p.rumbo) * lado; c.rumbo = p.rumbo; c.vel = 0; c.y = null;
-        choques.empujar(c, 2.1);
+      // Se sube al carro más cercano a menos de 4,5 m: uno estacionado o uno que dejó antes.
+      let elegido = null, dmin = 4.5;
+      const dist = (x, z) => Math.hypot(x - p.x, z - p.z);
+      if (modo !== 'volar') {
+        for (const veh of sueltos) { const d = dist(veh.pose.x, veh.pose.z); if (d < dmin) { dmin = d; elegido = { veh }; } }
+        for (const e of estacionados?.lista || []) {
+          if (e.oculto) continue;
+          const d = dist(e.x, e.z);
+          if (d < dmin) { dmin = d; elegido = { estacionado: e }; }
+        }
+      }
+      if (elegido?.estacionado) {
+        const e = elegido.estacionado;
+        estacionados.ocultar(e);
+        const nuevoCarro = crearVehiculo(e.tipo, e.color);
+        escena.add(nuevoCarro.raiz);
+        usar(nuevoCarro, e.x, e.z, e.rumbo);
+      } else if (elegido?.veh) {
+        usar(elegido.veh, elegido.veh.pose.x, elegido.veh.pose.z, elegido.veh.pose.rumbo);
+      } else {
+        // Si no hay uno al lado, el último carro: a menos de 25 m se sube; si está lejos, aparece junto al personaje.
+        const { x, z, rumbo } = v.pose || c;
+        if (Math.hypot(x - p.x, z - p.z) > 25 || modo === 'volar') {
+          const lado = modo === 'volar' ? 0 : 3; // desde Volar el carro aparece sobre la calle misma
+          const q = { x: p.x + Math.cos(p.rumbo) * lado, z: p.z - Math.sin(p.rumbo) * lado };
+          tomar(v);
+          choques.empujar(q, 2.1);
+          usar(v, q.x, q.z, p.rumbo);
+        } else usar(v, x, z, rumbo);
       }
       persona.raiz.visible = false;
     } else if (modo === 'manejar') {
-      // Se baja por el lado izquierdo.
-      p.x = c.x - Math.cos(c.rumbo) * 1.8; p.z = c.z + Math.sin(c.rumbo) * 1.8; p.rumbo = c.rumbo;
+      // Se baja por el lado izquierdo y el carro queda ahí.
+      soltar(v, c.x, c.z, c.rumbo);
+      p.x = c.x - Math.cos(c.rumbo) * (v.ancho / 2 + 0.9); p.z = c.z + Math.sin(c.rumbo) * (v.ancho / 2 + 0.9); p.rumbo = c.rumbo;
       choques.empujar(p, 0.35);
       c.vel = 0;
     }
@@ -206,9 +213,7 @@ export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoy
 
   function actualizar(dt) {
     const n = noche.value;
-    taxi.luz.intensity = n * 40;
-    taxi.faro.emissiveIntensity = 0.2 + n * 3;
-    taxi.piloto.emissiveIntensity = 0.2 + n * 1.5;
+    v.luz.intensity = modo === 'manejar' ? n * 40 : 0;
     if (modo === 'volar') return null;
     const { avance, giro, correr, freno } = controles.leer();
 
@@ -234,25 +239,25 @@ export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoy
     c.inercia += (((c.vel - (c.velAntes ?? c.vel)) / Math.max(dt, 1e-3)) - c.inercia) * Math.min(1, dt * 6);
     c.velAntes = c.vel;
     c.giro += (giro * 0.55 - c.giro) * Math.min(1, dt * 6);
-    c.rumbo += (c.vel / 2.5) * Math.tan(c.giro * (1 - Math.min(0.6, Math.abs(c.vel) / 40))) * dt;
+    c.rumbo += (c.vel / (v.largo * 0.62)) * Math.tan(c.giro * (1 - Math.min(0.6, Math.abs(c.vel) / 40))) * dt;
     c.x -= Math.sin(c.rumbo) * c.vel * dt;
     c.z -= Math.cos(c.rumbo) * c.vel * dt;
     // Dos círculos (adelante y atrás) cubren la carrocería.
-    for (const off of [-1.15, 1.15]) {
+    for (const off of [-v.largo * 0.27, v.largo * 0.27]) {
       const q = { x: c.x - Math.sin(c.rumbo) * off, z: c.z - Math.cos(c.rumbo) * off };
-      const nrm = choques.empujar(q, 0.95);
+      const nrm = choques.empujar(q, v.ancho * 0.52);
       if (nrm) {
         c.x = q.x + Math.sin(c.rumbo) * off; c.z = q.z + Math.cos(c.rumbo) * off;
         c.vel *= -0.25;
       }
     }
-    c.rodado += c.vel * dt / 0.31;
-    for (const r of taxi.ruedas) {
+    c.rodado += c.vel * dt / v.radio;
+    for (const r of v.ruedas) {
       r.rueda.rotation.x = -c.rodado;
       r.eje.rotation.y = r.delantera ? c.giro : 0;
     }
     colocarTaxi(dt);
-    return seguir(c.x, c.z, c.rumbo, 9 + Math.abs(c.vel) * 0.15, 3.6, 1.2, dt);
+    return seguir(c.x, c.z, c.rumbo, v.largo * 2.1 + 1.5 + Math.abs(c.vel) * 0.15, 2.6 + v.largo * 0.25, 1.2, dt);
   }
 
   // Arrastrar sobre la escena gira la cámara alrededor; al soltar vuelve sola detrás.

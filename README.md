@@ -8,7 +8,9 @@ Empezamos por Bogotá. Después vendrán otras ciudades y pueblos de Colombia.
 
 ## Estado
 
-Primera versión de la zona Centro, probada en escritorio y en celular (vista emulada) el 2026-11-03.
+Primera versión de la zona Centro. **Pruébalo en línea: https://imderf.github.io/simulator-bogota/** (se publica sola desde la rama `zona-centro`).
+
+Es para computador. En celular aparece una pantalla que pide abrirlo en un computador o activar «Sitio de escritorio» en el navegador.
 
 Para verla en local: `npm run inicio` y abrir http://127.0.0.1:8801. Ese servidor no guarda caché, así que cada cambio se ve al recargar. Necesita un navegador con WebGPU o WebGL 2.
 

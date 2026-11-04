@@ -62,6 +62,16 @@ Funcionó al primer intento: sin errores de shader y a 120 cuadros por segundo e
 - **Árboles**: 27.899 troncos (los de más de 3 m) cuentan para los choques.
 - **Cámara**: se acerca si un muro se interpone y vuelve suave cuando hay espacio. Arrastrar sobre la escena gira la vista; al soltar, vuelve sola detrás.
 
+### Carros con forma real y estacionados (2026-11-03)
+
+- Cuatro tipos armados en código (`js/vehiculos.js`): **taxi** compacto, **sedán**, **camioneta** y **pickup**. La carrocería sale de perfiles a lo largo del carro (piso con pasos de rueda, cintura, techo y anchos), con vidrios oscuros y sin interior. Detalles: farolas y pilotos que se encienden de noche, parrilla, espejos, bómperes y placas amarillas como las de Colombia.
+- 520 carros estacionados a lado y lado de calles secundarias y locales alrededor de la plaza, con colores variados. Se dibujan con instancias: cuatro tipos en 16 llamadas a la GPU.
+- Con E el jugador se sube al carro más cercano (estacionado o uno que dejó); el que suelta se queda donde lo dejó.
+
+### Solo computador (2026-11-03)
+
+En celular se muestra una pantalla que pide abrirlo en computador o activar «Sitio de escritorio», y no se descarga la ciudad. En modo escritorio el navegador se presenta como de escritorio y el simulador carga normal.
+
 ## Lo que sigue
 
 1. **Probar en un celular real**: Android e iPhone, con datos móviles.

@@ -11,6 +11,7 @@ import { construirLugares, puntosDeVista, cameraPos } from './lugares.js';
 import { direccionSol, diaDelAno } from './sol.js';
 import { crearChoques } from './choques.js';
 import { crearRecorrido } from './jugador.js';
+import { estacionar } from './vehiculos.js';
 
 const DATOS = `./datos/${ZONA.nombre}/`;
 const barra = document.querySelector('#carga-barra'), textoCarga = document.querySelector('#carga-texto');
@@ -130,11 +131,14 @@ for (const anillo of lugares.solidos) muros.push({ anillo, techo: Infinity });
 // Troncos de los árboles de más de 3 m; los arbustos no estorban.
 const troncos = arboles.filter((a) => a.forma !== 4 && a.alt >= 3).map((a) => [a.x, a.z, a.alt > 12 ? 0.35 : 0.22]);
 const choques = crearChoques(muros, troncos);
+// Carros estacionados en calles secundarias y locales alrededor de la plaza; también suman a los choques.
+const estacionados = estacionar({ vias, terreno, choques, centro: lugares.centroPlaza });
+escena.add(estacionados.grupo);
 const [px, pz] = [lugares.centroPlaza[0] + 14, lugares.centroPlaza[1] + 14];
 const catedral = lugares.solidos[0];
 const ccx = catedral.reduce((s, [x]) => s + x, 0) / catedral.length, ccz = catedral.reduce((s, [, z]) => s + z, 0) / catedral.length;
 const recorrido = crearRecorrido({
-  escena, camara, terreno, choques, elJoystick: document.querySelector('#joystick'), lienzo: renderer.domElement,
+  escena, camara, terreno, choques, estacionados, elJoystick: document.querySelector('#joystick'), lienzo: renderer.domElement,
   inicio: { x: px, z: pz, rumbo: Math.atan2(-(ccx - px), -(ccz - pz)) }, // mirando hacia la Catedral
 });
 // Punto de la vía vehicular más cercana (troncales a calles de servicio), con su dirección.
@@ -173,7 +177,7 @@ function elegirModo(m) {
   }
   document.body.dataset.modo = m;
   botonesModo.forEach((b) => b.classList.toggle('activo', b.dataset.modo === m));
-  botonTaxi.textContent = m === 'manejar' ? 'Bajarse' : 'Subir al taxi';
+  botonTaxi.textContent = m === 'manejar' ? 'Bajarse' : 'Subir al carro';
 }
 let primeraVez = true;
 botonesModo.forEach((b) => b.addEventListener('click', () => elegirModo(b.dataset.modo)));
@@ -247,4 +251,4 @@ await renderer.compileAsync(escena, camara);
 paso('Listo', 10);
 document.querySelector('#carga').classList.add('oculta');
 // Para depurar desde la consola del navegador.
-window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos };
+window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo, choques, troncos, estacionados };

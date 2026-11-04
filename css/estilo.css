@@ -106,3 +106,22 @@ body:not([data-modo="volar"]) #lugares button.activo { border-color: var(--borde
   #modos { left: 16px; transform: none; top: max(16px, env(safe-area-inset-top)); bottom: auto; }
   body:not([data-modo="volar"]) #lugares { display: none; }
 }
+
+/* Solo computador: en celular se muestra esta pantalla y no se carga la ciudad. */
+#escritorio { display: none; }
+.solo-escritorio #escritorio {
+  position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 24px 16px;
+  background: #0d1320; overflow-y: auto;
+}
+.solo-escritorio #carga, .solo-escritorio #titulo, .solo-escritorio #lugares, .solo-escritorio #modos,
+.solo-escritorio #reloj, .solo-escritorio #ayuda, .solo-escritorio #tactil { display: none !important; }
+#escritorio > div { max-width: 360px; }
+#escritorio h1 { margin: 0 0 12px; font-size: 22px; line-height: 1.25; }
+#escritorio p, #escritorio li { font-size: 15px; line-height: 1.5; color: var(--suave); }
+#escritorio ul { padding-left: 18px; margin: 0 0 20px; }
+#escritorio strong { color: var(--texto); }
+#copiar-enlace {
+  font: inherit; font-size: 15px; color: #14110a; background: var(--acento); border: 0; border-radius: 10px;
+  padding: 12px 16px; width: 100%; cursor: pointer;
+}
+#copiar-enlace:focus-visible { outline: 2px solid var(--texto); outline-offset: 2px; }
