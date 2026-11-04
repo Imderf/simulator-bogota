@@ -587,7 +587,7 @@ export function construirLugares(datos, terreno, edificios) {
     cabina.lookAt(pb.x, cabina.position.y, pb.z);
   };
 
-  return { grupo, animar, excluir: (e) => excluir.some((p) => adentro([e.cx, e.cz], p)), centroPlaza };
+  return { grupo, animar, excluir: (e) => excluir.some((p) => adentro([e.cx, e.cz], p)), solidos: excluir, centroPlaza };
 }
 
 // Puntos para el menú de lugares. La cámara se para del lado de `desde` (por defecto, la Plaza de Bolívar),

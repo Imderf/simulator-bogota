@@ -9,6 +9,8 @@ import { cargarArboles, mallasArboles } from './arboles.js';
 import { cargarLineas, mallaVias, texturaSuelo } from './vias.js';
 import { construirLugares, puntosDeVista, cameraPos } from './lugares.js';
 import { direccionSol, diaDelAno } from './sol.js';
+import { crearChoques } from './choques.js';
+import { crearRecorrido } from './jugador.js';
 
 const DATOS = `./datos/${ZONA.nombre}/`;
 const barra = document.querySelector('#carga-barra'), textoCarga = document.querySelector('#carga-texto');
@@ -109,10 +111,51 @@ function irA(p, inmediato = false) {
 for (const p of puntosDeVista(lugaresDatos, lugares.centroPlaza)) {
   const b = document.createElement('button');
   b.textContent = p.nombre;
-  b.addEventListener('click', () => { irA(p); menu.querySelectorAll('button').forEach((x) => x.classList.toggle('activo', x === b)); });
+  b.addEventListener('click', () => {
+    if (recorrido.modo !== 'volar') elegirModo('volar');
+    irA(p);
+    menu.querySelectorAll('button').forEach((x) => x.classList.toggle('activo', x === b));
+  });
   menu.appendChild(b);
 }
 irA({ x: lugares.centroPlaza[0], z: lugares.centroPlaza[1], dist: 1400, alto: 650 }, true);
+
+// Recorrido a pie y en taxi. Los choques usan las plantas del catastro y las de los lugares hechos a mano.
+const choques = crearChoques([...edificios.filter((e) => !lugares.excluir(e)).map((e) => e.anillos[0]), ...lugares.solidos]);
+const [px, pz] = [lugares.centroPlaza[0] + 14, lugares.centroPlaza[1] + 14];
+const catedral = lugares.solidos[0];
+const ccx = catedral.reduce((s, [x]) => s + x, 0) / catedral.length, ccz = catedral.reduce((s, [, z]) => s + z, 0) / catedral.length;
+const recorrido = crearRecorrido({
+  escena, camara, terreno, choques, elJoystick: document.querySelector('#joystick'),
+  inicio: { x: px, z: pz, rumbo: Math.atan2(-(ccx - px), -(ccz - pz)) }, // mirando hacia la Catedral
+});
+const botonesModo = [...document.querySelectorAll('#modos button')];
+const botonTaxi = document.querySelector('#taxi');
+function elegirModo(m) {
+  const antes = recorrido.modo;
+  if (m === 'caminar' && antes === 'volar' && primeraVez) primeraVez = false;
+  else if (m === 'caminar' && antes === 'volar') recorrido.llevarA(controles.target.x, controles.target.z);
+  recorrido.cambiar(m);
+  vuelo = null;
+  controles.enabled = m === 'volar';
+  if (m === 'volar') {
+    const [x, z] = recorrido.posicion();
+    controles.target.set(x, terreno.altura(x, z) + 2, z);
+    camara.position.y += 40;
+  }
+  document.body.dataset.modo = m;
+  botonesModo.forEach((b) => b.classList.toggle('activo', b.dataset.modo === m));
+  botonTaxi.textContent = m === 'manejar' ? 'Bajarse' : 'Subir al taxi';
+}
+let primeraVez = true;
+botonesModo.forEach((b) => b.addEventListener('click', () => elegirModo(b.dataset.modo)));
+botonTaxi.addEventListener('click', () => elegirModo(recorrido.modo === 'manejar' ? 'caminar' : 'manejar'));
+addEventListener('keydown', (e) => {
+  if (e.repeat || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+  if (e.code === 'KeyE' && recorrido.modo !== 'volar') elegirModo(recorrido.modo === 'manejar' ? 'caminar' : 'manejar');
+  if (e.code === 'KeyV') elegirModo(recorrido.modo === 'volar' ? 'caminar' : 'volar');
+});
+document.body.dataset.modo = 'volar';
 
 // Hora del día. Arranca con la hora real de Bogotá.
 const control = document.querySelector('#hora'), etiqueta = document.querySelector('#hora-texto');
@@ -157,12 +200,16 @@ renderer.setAnimationLoop(() => {
     camara.position.y += Math.sin(Math.PI * k) * vuelo.c0.distanceTo(vuelo.c1) * 0.15;
     if (vuelo.t >= 1) vuelo = null;
   }
-  controles.update();
-  const piso = terreno.altura(camara.position.x, camara.position.z) + 8;
-  if (camara.position.y < piso) camara.position.y = piso;
+  const mira = recorrido.actualizar(dt);
+  if (!mira) {
+    controles.update();
+    const piso = terreno.altura(camara.position.x, camara.position.z) + 8;
+    if (camara.position.y < piso) camara.position.y = piso;
+  }
+  const centroSombra = mira || controles.target;
   cameraPos.value.copy(camara.position);
-  sol.position.copy(controles.target).addScaledVector(dirSol, 3000);
-  sol.target.position.copy(controles.target);
+  sol.position.copy(centroSombra).addScaledVector(dirSol, 3000);
+  sol.target.position.copy(centroSombra);
   lugares.animar(reloj.elapsedTime);
   renderer.render(escena, camara);
 });
@@ -172,4 +219,4 @@ await renderer.compileAsync(escena, camara);
 paso('Listo', 10);
 document.querySelector('#carga').classList.add('oculta');
 // Para depurar desde la consola del navegador.
-window.simulador = { escena, camara, controles, terreno, irA };
+window.simulador = { escena, camara, controles, terreno, irA, recorrido, elegirModo };

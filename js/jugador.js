@@ -1,0 +1,257 @@
+import * as THREE from 'three/webgpu';
+import { noche } from './edificios.js';
+
+// Recorrer la ciudad a pie o en taxi. El personaje y el carro se arman con piezas simples: no hay modelos.
+
+const mat = (color, extra = {}) => new THREE.MeshStandardNodeMaterial({ color, roughness: 0.8, ...extra });
+const pieza = (geo, material, x, y, z, padre) => {
+  const m = new THREE.Mesh(geo, material);
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  padre.add(m);
+  return m;
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// Personaje: unos 1,72 m. Piernas y brazos cuelgan de pivotes para animar el paso.
+// ---------------------------------------------------------------------------------------------------------------
+function crearPersonaje() {
+  const raiz = new THREE.Group();
+  raiz.name = 'Personaje';
+  const piel = mat(0xb8835a), jean = mat(0x2f3e5a), chaqueta = mat(0x7a2e2a), zapato = mat(0x1d1b19), pelo = mat(0x1e1712);
+  const cuerpo = new THREE.Group();
+  raiz.add(cuerpo);
+  pieza(new THREE.BoxGeometry(0.42, 0.56, 0.24), chaqueta, 0, 1.2, 0, cuerpo);
+  pieza(new THREE.BoxGeometry(0.4, 0.14, 0.22), jean, 0, 0.88, 0, cuerpo);
+  pieza(new THREE.CylinderGeometry(0.055, 0.06, 0.08, 8), piel, 0, 1.52, 0, cuerpo);
+  const cabeza = pieza(new THREE.SphereGeometry(0.115, 14, 10), piel, 0, 1.63, 0, cuerpo);
+  cabeza.scale.set(1, 1.12, 1.05);
+  pieza(new THREE.SphereGeometry(0.12, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), pelo, 0, 1.66, 0.01, cuerpo);
+  const extremidad = (x, y, largo, ancho, material, punta, colorPunta) => {
+    const pivote = new THREE.Group();
+    pivote.position.set(x, y, 0);
+    cuerpo.add(pivote);
+    pieza(new THREE.BoxGeometry(ancho, largo, ancho), material, 0, -largo / 2, 0, pivote);
+    if (punta) pieza(punta, colorPunta, 0, -largo - 0.03, -0.04, pivote); // el frente es -z
+    return pivote;
+  };
+  const piernaI = extremidad(-0.1, 0.84, 0.8, 0.15, jean, new THREE.BoxGeometry(0.14, 0.07, 0.26), zapato);
+  const piernaD = extremidad(0.1, 0.84, 0.8, 0.15, jean, new THREE.BoxGeometry(0.14, 0.07, 0.26), zapato);
+  const brazoI = extremidad(-0.27, 1.45, 0.62, 0.11, chaqueta, new THREE.SphereGeometry(0.055, 8, 6), piel);
+  const brazoD = extremidad(0.27, 1.45, 0.62, 0.11, chaqueta, new THREE.SphereGeometry(0.055, 8, 6), piel);
+  let fase = 0;
+  const animar = (velocidad, dt) => {
+    fase += dt * (2.2 + velocidad * 2.4);
+    const amplitud = Math.min(0.75, velocidad * 0.32);
+    piernaI.rotation.x = Math.sin(fase) * amplitud;
+    piernaD.rotation.x = -Math.sin(fase) * amplitud;
+    brazoI.rotation.x = -Math.sin(fase) * amplitud * 0.8;
+    brazoD.rotation.x = Math.sin(fase) * amplitud * 0.8;
+    cuerpo.position.y = Math.abs(Math.sin(fase)) * amplitud * 0.06;
+  };
+  return { raiz, animar };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Taxi amarillo, compacto como los de Bogotá: unos 3,9 m de largo. Mira hacia -z.
+// ---------------------------------------------------------------------------------------------------------------
+function crearTaxi() {
+  const raiz = new THREE.Group();
+  raiz.name = 'Taxi';
+  const amarillo = mat(0xf2bf16, { roughness: 0.35, metalness: 0.1 });
+  const vidrio = mat(0x1d2730, { roughness: 0.1 });
+  const negro = mat(0x161616, { roughness: 0.9 });
+  const rin = mat(0x9a9a9a, { roughness: 0.4, metalness: 0.5 });
+  const faro = new THREE.MeshStandardNodeMaterial({ color: 0xfff6dc, emissive: 0xfff0c8, emissiveIntensity: 0.2 });
+  const piloto = new THREE.MeshStandardNodeMaterial({ color: 0x8a1010, emissive: 0xff2020, emissiveIntensity: 0.2 });
+  const carroceria = new THREE.Group();
+  raiz.add(carroceria);
+  pieza(new THREE.BoxGeometry(1.66, 0.62, 3.9), amarillo, 0, 0.62, 0, carroceria);
+  pieza(new THREE.BoxGeometry(1.5, 0.52, 1.95), amarillo, 0, 1.18, 0.25, carroceria);
+  pieza(new THREE.BoxGeometry(1.52, 0.4, 1.7), vidrio, 0, 1.2, 0.25, carroceria);
+  pieza(new THREE.BoxGeometry(1.42, 0.38, 0.06), vidrio, 0, 1.17, -0.72, carroceria).rotation.x = -0.45;
+  pieza(new THREE.BoxGeometry(1.7, 0.18, 0.12), negro, 0, 0.38, -1.96, carroceria);
+  pieza(new THREE.BoxGeometry(1.7, 0.18, 0.12), negro, 0, 0.38, 1.96, carroceria);
+  // Franja de cuadros a los lados y letrero TAXI en el techo.
+  for (const s of [-1, 1]) for (let i = 0; i < 9; i++) pieza(new THREE.BoxGeometry(0.02, 0.07, 0.16), i % 2 ? negro : amarillo, s * 0.84, 0.72, -1.3 + i * 0.32, carroceria);
+  pieza(new THREE.BoxGeometry(0.7, 0.16, 0.22), mat(0xfaf6e8, { emissive: 0xfff1b0, emissiveIntensity: 0.3 }), 0, 1.52, 0.2, carroceria);
+  const faros = [-0.6, 0.6].map((x) => pieza(new THREE.BoxGeometry(0.34, 0.14, 0.05), faro, x, 0.7, -1.96, carroceria));
+  [-0.62, 0.62].forEach((x) => pieza(new THREE.BoxGeometry(0.3, 0.12, 0.05), piloto, x, 0.72, 1.96, carroceria));
+  const ruedas = [];
+  for (const [x, z] of [[-0.78, -1.25], [0.78, -1.25], [-0.78, 1.22], [0.78, 1.22]]) {
+    const eje = new THREE.Group();
+    eje.position.set(x, 0.31, z);
+    raiz.add(eje);
+    const rueda = new THREE.Group();
+    eje.add(rueda);
+    pieza(new THREE.CylinderGeometry(0.31, 0.31, 0.2, 14).rotateZ(Math.PI / 2), negro, 0, 0, 0, rueda);
+    pieza(new THREE.CylinderGeometry(0.17, 0.17, 0.21, 10).rotateZ(Math.PI / 2), rin, 0, 0, 0, rueda);
+    ruedas.push({ eje, rueda, delantera: z < 0 });
+  }
+  // Luz de los faros, sin sombra para que no pese.
+  const luz = new THREE.SpotLight(0xfff1d0, 0, 60, 0.5, 0.6, 1.2);
+  luz.position.set(0, 0.8, -1.9);
+  luz.target.position.set(0, -0.6, -14);
+  raiz.add(luz, luz.target);
+  return { raiz, carroceria, ruedas, luz, faro, piloto };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Controles: teclado y joystick táctil. Devuelven avance (-1 a 1), giro (-1 a 1) y correr.
+// ---------------------------------------------------------------------------------------------------------------
+function crearControles(elJoystick) {
+  const teclas = new Set();
+  const enCampo = (e) => /INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
+  addEventListener('keydown', (e) => { if (!enCampo(e)) teclas.add(e.code); });
+  addEventListener('keyup', (e) => teclas.delete(e.code));
+  addEventListener('blur', () => teclas.clear());
+  const toque = { x: 0, y: 0, activo: false };
+  const perilla = elJoystick.querySelector('span');
+  let id = null, cx = 0, cy = 0;
+  elJoystick.addEventListener('pointerdown', (e) => {
+    id = e.pointerId;
+    try { elJoystick.setPointerCapture(id); } catch { /* algunos navegadores no la permiten: igual funciona sin ella */ }
+    const r = elJoystick.getBoundingClientRect(); cx = r.left + r.width / 2; cy = r.top + r.height / 2;
+    toque.activo = true; mover(e);
+  });
+  const mover = (e) => {
+    if (e.pointerId !== id) return;
+    let dx = (e.clientX - cx) / 48, dy = (e.clientY - cy) / 48;
+    const l = Math.hypot(dx, dy); if (l > 1) { dx /= l; dy /= l; }
+    toque.x = dx; toque.y = dy;
+    perilla.style.transform = `translate(${dx * 34}px, ${dy * 34}px)`;
+  };
+  const soltar = (e) => { if (e.pointerId !== id) return; id = null; toque.activo = false; toque.x = toque.y = 0; perilla.style.transform = ''; };
+  elJoystick.addEventListener('pointermove', mover);
+  elJoystick.addEventListener('pointerup', soltar);
+  elJoystick.addEventListener('pointercancel', soltar);
+  const t = (...c) => c.some((k) => teclas.has(k));
+  return {
+    leer() {
+      let avance = (t('KeyW', 'ArrowUp') ? 1 : 0) - (t('KeyS', 'ArrowDown') ? 1 : 0);
+      let giro = (t('KeyA', 'ArrowLeft') ? 1 : 0) - (t('KeyD', 'ArrowRight') ? 1 : 0);
+      if (toque.activo) { avance = -toque.y; giro = -toque.x; }
+      return { avance, giro, correr: t('ShiftLeft', 'ShiftRight') || Math.hypot(toque.x, toque.y) > 0.92, freno: t('Space') };
+    },
+    teclas,
+  };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// El recorrido: modos, física y cámara.
+// ---------------------------------------------------------------------------------------------------------------
+export function crearRecorrido({ escena, camara, terreno, choques, inicio, elJoystick }) {
+  const persona = crearPersonaje(), taxi = crearTaxi();
+  escena.add(persona.raiz, taxi.raiz);
+  const controles = crearControles(elJoystick);
+
+  const p = { x: inicio.x, z: inicio.z, rumbo: inicio.rumbo, vel: 0 };
+  const c = { x: inicio.x + 9, z: inicio.z + 4, rumbo: inicio.rumbo, vel: 0, giro: 0, rodado: 0 };
+  choques.empujar(c, 2.1);
+  let modo = 'volar';
+  const camPos = new THREE.Vector3(), mira = new THREE.Vector3();
+  const colocar = () => {
+    persona.raiz.position.set(p.x, terreno.altura(p.x, p.z), p.z);
+    persona.raiz.rotation.y = p.rumbo;
+    colocarTaxi();
+  };
+  const colocarTaxi = () => {
+    const sx = Math.sin(c.rumbo), sz = Math.cos(c.rumbo);
+    const yA = terreno.altura(c.x - sx * 1.3, c.z - sz * 1.3), yB = terreno.altura(c.x + sx * 1.3, c.z + sz * 1.3);
+    taxi.raiz.position.set(c.x, (yA + yB) / 2, c.z);
+    taxi.raiz.rotation.set(0, c.rumbo, 0);
+    taxi.raiz.rotateX(Math.atan2(yA - yB, 2.6));
+  };
+  colocar();
+
+  function cambiar(nuevo) {
+    if (nuevo === modo) return modo;
+    if (nuevo === 'manejar') {
+      // Si el taxi quedó lejos, aparece junto al personaje.
+      if (Math.hypot(c.x - p.x, c.z - p.z) > 25 || modo === 'volar') {
+        c.x = p.x + Math.cos(p.rumbo) * 3; c.z = p.z - Math.sin(p.rumbo) * 3; c.rumbo = p.rumbo; c.vel = 0;
+        choques.empujar(c, 2.1);
+      }
+      persona.raiz.visible = false;
+    } else if (modo === 'manejar') {
+      // Se baja por el lado izquierdo.
+      p.x = c.x - Math.cos(c.rumbo) * 1.8; p.z = c.z + Math.sin(c.rumbo) * 1.8; p.rumbo = c.rumbo;
+      choques.empujar(p, 0.35);
+      c.vel = 0;
+    }
+    if (nuevo !== 'manejar') persona.raiz.visible = true;
+    modo = nuevo;
+    camPos.copy(camara.position);
+    colocar();
+    return modo;
+  }
+
+  function actualizar(dt) {
+    const n = noche.value;
+    taxi.luz.intensity = n * 40;
+    taxi.faro.emissiveIntensity = 0.2 + n * 3;
+    taxi.piloto.emissiveIntensity = 0.2 + n * 1.5;
+    if (modo === 'volar') return null;
+    const { avance, giro, correr, freno } = controles.leer();
+
+    if (modo === 'caminar') {
+      const objetivo = avance * (correr ? 4.2 : 1.6);
+      p.vel += (objetivo - p.vel) * Math.min(1, dt * 8);
+      p.rumbo += giro * dt * 2.6;
+      p.x -= Math.sin(p.rumbo) * p.vel * dt;
+      p.z -= Math.cos(p.rumbo) * p.vel * dt;
+      choques.empujar(p, 0.35);
+      persona.animar(Math.abs(p.vel), dt);
+      colocar();
+      return seguir(p.x, p.z, p.rumbo, 5.2, 2.4, 1.5, dt);
+    }
+
+    // Manejar: aceleración, freno, rozamiento y giro de bicicleta (radio según la velocidad).
+    const MAX = correr ? 22 : 15;
+    if (freno) c.vel *= Math.max(0, 1 - dt * 4);
+    else if (avance > 0) c.vel += (c.vel < 0 ? 9 : 4.2) * dt;
+    else if (avance < 0) c.vel -= (c.vel > 0 ? 9 : 2.5) * dt;
+    else c.vel *= Math.max(0, 1 - dt * 0.6);
+    c.vel = Math.max(-5, Math.min(MAX, c.vel));
+    c.giro += (giro * 0.55 - c.giro) * Math.min(1, dt * 6);
+    c.rumbo += (c.vel / 2.5) * Math.tan(c.giro * (1 - Math.min(0.6, Math.abs(c.vel) / 40))) * dt;
+    c.x -= Math.sin(c.rumbo) * c.vel * dt;
+    c.z -= Math.cos(c.rumbo) * c.vel * dt;
+    // Dos círculos (adelante y atrás) cubren la carrocería.
+    for (const off of [-1.15, 1.15]) {
+      const q = { x: c.x - Math.sin(c.rumbo) * off, z: c.z - Math.cos(c.rumbo) * off };
+      const nrm = choques.empujar(q, 0.95);
+      if (nrm) {
+        c.x = q.x + Math.sin(c.rumbo) * off; c.z = q.z + Math.cos(c.rumbo) * off;
+        c.vel *= -0.25;
+      }
+    }
+    c.rodado += c.vel * dt / 0.31;
+    for (const r of taxi.ruedas) {
+      r.rueda.rotation.x = -c.rodado;
+      r.eje.rotation.y = r.delantera ? c.giro : 0;
+    }
+    colocarTaxi();
+    return seguir(c.x, c.z, c.rumbo, 9 + Math.abs(c.vel) * 0.15, 3.6, 1.2, dt);
+  }
+
+  // Cámara detrás, suavizada. Si queda bajo el terreno, sube.
+  function seguir(x, z, rumbo, dist, alto, mirarAlto, dt) {
+    const y = terreno.altura(x, z);
+    const deseo = new THREE.Vector3(x + Math.sin(rumbo) * dist, y + alto, z + Math.cos(rumbo) * dist);
+    deseo.y = Math.max(deseo.y, terreno.altura(deseo.x, deseo.z) + 1.2);
+    camPos.lerp(deseo, 1 - Math.exp(-dt * 5));
+    camara.position.copy(camPos);
+    mira.set(x, y + mirarAlto, z);
+    camara.lookAt(mira);
+    return mira;
+  }
+
+  return {
+    cambiar, actualizar,
+    get modo() { return modo; },
+    posicion: () => (modo === 'manejar' ? [c.x, c.z] : [p.x, p.z]),
+    llevarA(x, z) { p.x = x; p.z = z; p.vel = 0; choques.empujar(p, 0.35); colocar(); },
+    teclas: controles.teclas,
+  };
+}

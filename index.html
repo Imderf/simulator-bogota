@@ -24,6 +24,8 @@
   <link rel="modulepreload" href="./js/vias.js" />
   <link rel="modulepreload" href="./js/lugares.js" />
   <link rel="modulepreload" href="./js/sol.js" />
+  <link rel="modulepreload" href="./js/choques.js" />
+  <link rel="modulepreload" href="./js/jugador.js" />
   <script type="module" src="./js/main.js"></script>
   <link rel="stylesheet" href="./css/estilo.css" />
 </head>
@@ -36,6 +38,22 @@
   </header>
 
   <nav id="lugares" aria-label="Lugares"></nav>
+
+  <nav id="modos" aria-label="Modo">
+    <button data-modo="volar" class="activo">Volar</button>
+    <button data-modo="caminar">Caminar</button>
+    <button data-modo="manejar">Manejar</button>
+  </nav>
+
+  <p id="ayuda">
+    <span class="solo-caminar">W A S D o flechas · Shift para correr · E para subir al taxi · V para volar</span>
+    <span class="solo-manejar">W acelera · S frena y retrocede · A D giran · Espacio frena · E para bajarse</span>
+  </p>
+
+  <div id="tactil">
+    <div id="joystick" aria-hidden="true"><span></span></div>
+    <button id="taxi">Subir al taxi</button>
+  </div>
 
   <div id="reloj">
     <label for="hora">Hora</label>
